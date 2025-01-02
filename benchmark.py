@@ -18,10 +18,6 @@ def my_print(*args, **kwargs):
 
 embedding_models = [
     "nomic-embed-text:latest",
-    # "granite-embedding:278m",
-    "mxbai-embed-large:latest",
-    # "snowflake-arctic-embed:335m",
-    "all-minilm:33m",
 ]
 
 queries = [
@@ -39,10 +35,6 @@ queries = [
 # ))
 
 models = [
-    'smollm:135m',
-    'smollm:latest',
-    'orca-mini:latest',
-    'tinyllama:latest',
     'qwen2:latest',
     'llama3.1:latest',
     'gemma2:latest',
