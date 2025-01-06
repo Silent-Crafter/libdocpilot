@@ -1,10 +1,18 @@
-import dspy
 import psycopg2
 import textwrap
+
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings, StorageContext
+from llama_index.embeddings.ollama import OllamaEmbedding 
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.vector_stores.postgres import PGVectorStore
+from llama_index.llms.ollama import Ollama
 from sqlalchemy import make_url
 
 PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
 PG_DB_NAME = "postgres"
+
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 def init_pg(uri):
     conn = psycopg2.connect(uri)
@@ -74,7 +82,11 @@ def embed_documents(documents, embed_model, storage, debug: bool = False):
 
 
 def get_index_from_store(vector_store, embed_model):
-    return VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=OllamaEmbedding(model_name="nomic-embed-text"), show_progress=True)
+    return VectorStoreIndex.from_vector_store(
+        vector_store=vector_store,
+        embed_model=HuggingFaceEmbedding(model_name="ibm-granite/granite-embedding-125m-english"),
+        show_progress=True
+    )
 
 
 def get_query_engine(index, llm_model, debug: bool = False, **kwargs):
@@ -90,23 +102,37 @@ def main():
     conn = init_pg(PG_CONNECTION_URI)
     documents = load_documents("data")
     vector_store, storage = create_vector_store(PG_CONNECTION_URI, PG_DB_NAME, "items")
-    if get_total_nodes(conn, "data_items") == len(documents):
+
+    print(get_total_nodes(conn, "data_items"))
+    if get_total_nodes(conn, "data_items") >= len(documents):
         index = get_index_from_store(vector_store, "ibm-granite/granite-embedding-125m-english")
     else:
-        index = embed_documents(documents, "nomic-embed-text", storage, debug=True)
-    query_engine = get_query_engine(index, "qwen2", debug=True)
-    while True:
-        try:
-            prompt = input("\n>> ")
-        except (EOFError, KeyboardInterrupt):
-            break
+        index = embed_documents(documents, "ibm-granite/granite-embedding-125m-english", storage, debug=True)
 
-        if prompt == "/bye":
-            break
+    # query_engine = get_query_engine(index, "orca-mini", debug=True)
+    #
+    # while True:
+    #     try:
+    #         prompt = input("\n>> ")
+    #     except (EOFError, KeyboardInterrupt):
+    #         break
+    #
+    #     if prompt == "/bye":
+    #         break
+    #
+    #     response = query_engine.query(prompt.strip())
+    #     print()
+    #     print("\n".join(textwrap.wrap(str(response), width=80)))
 
-        response = query_engine.query(prompt.strip())
-        print()
-        print("\n".join(textwrap.wrap(str(response), width=80)))
+    retriever = index.as_retriever()
+    nodes =  retriever.retrieve("What was the gold standard of computers in 1980")
+
+    print(*nodes)
+
+    qe = index.as_query_engine(llm=Ollama(model="mistral", base_url="http://192.168.0.124:11434"))
+    resp = qe.query("What was the gold standard of computers in 1980")
+
+    print(resp)
 
 
 if __name__ == "__main__":
