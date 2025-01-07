@@ -3,4 +3,5 @@ llama-index-embeddings-huggingface
 llama-index-embeddings-ollama
 llama-index-vector-stores-postgres
 psycopg2-binary
-
+dspy
+openpyxl
