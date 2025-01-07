@@ -5,7 +5,7 @@ import pandas as pd
 import openpyxl
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
-from llama_index.core.storage.index_store import SimpleIndexStore
+import os
 
 
 class CustomXLSXReader(BaseReader):
@@ -68,14 +68,50 @@ class CustomXLSXReader(BaseReader):
         return documents
 
 
+class CustomPDFReader(BaseReader):
+    """PDF parser."""
+
+    def __init__(self, return_full_document: Optional[bool] = False) -> None:
+        """
+        Initialize PDFReader.
+        """
+        self.return_full_document = return_full_document
+
+    def load_data(
+            self,
+            file: Path,
+            extra_info: Optional[Dict] = None,
+    ) -> List[Document]:
+        """Parse file."""
+        if not isinstance(file, Path):
+            file = Path(file)
+
+        metadata = {"file_name": file.name}
+
+        docs = []
+
+        os.system(f"pdftotext -layout -nodiag '{file.as_posix()}'")
+        txt_file_name = file.name.replace(file.suffix, ".txt")
+        print('Reading', txt_file_name)
+        text = ''
+        with open("data/"+txt_file_name, "r", encoding="utf-8") as f:
+            text = f.read()
+        os.remove(file.resolve().as_posix().replace(file.suffix, ".txt"))
+
+        # Join text extracted from each page
+        docs.append(Document(text=text, metadata=metadata))
+
+        return docs
+
 if __name__ == '__main__':
     from llama_index.core import SimpleDirectoryReader
 
-    documents = SimpleDirectoryReader(
-        "data",
-        file_extractor={".xlsx": CustomXLSXReader()},
-    ).load_data()
+    # documents = SimpleDirectoryReader(
+    #     "data",
+    #     file_extractor={".xlsx": CustomXLSXReader(), ".pdf": CustomPDFReader()},
+    #     required_exts=['.pdf']
+    # ).load_data()
 
-    # documents = CustomXLSXReader().load_data("data/machines.xlsx")
+    documents = CustomPDFReader().load_data(Path("data/Control Plan - 20. winding CP rev-28.pdf"))
 
     print(documents[0].text)
