@@ -93,7 +93,6 @@ class CustomPDFReader(BaseReader):
 
         os.system(f"pdftotext -layout -nodiag '{file.as_posix()}'")
         txt_file_name = file.name.replace(file.suffix, ".txt")
-        print('Reading', txt_file_name)
         text = ''
         with open("data/"+txt_file_name, "r", encoding="utf-8") as f:
             text = f.read()
