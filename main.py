@@ -5,7 +5,7 @@ from llama_index.core import SimpleDirectoryReader
 
 from parsers import CustomXLSXReader, CustomPDFReader
 from dspyclasses import LlamaIndexRMClient, MultiHopRAG
-from utils import reindex_vector_store, create_vector_store
+from utils import reindex_vector_store, get_vector_store_index
 
 PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
 PG_DB_NAME = "postgres"
@@ -19,7 +19,8 @@ def m_main():
         }
     ).load_data()
 
-    index = reindex_vector_store(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
+    print(len(docs))
+    index = get_vector_store_index(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
     multi_hop = MultiHopRAG(index=index, num_passages=5, max_hops=1)
     chatbot = dspy.LM(
         model="ollama/dolphin3",
@@ -58,7 +59,7 @@ def s_main():
     ).load_data()
 
     index = reindex_vector_store(document, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
-    multi_hop = MultiHopRAG(index=index, num_passages=10, max_hops=1)
+    multi_hop = MultiHopRAG(index=index, num_passages=5, max_hops=1)
     chatbot = dspy.LM(
         model="ollama/dolphin3",
         system_prompt="Strictly follow the given instructions and adhere to the given format",
