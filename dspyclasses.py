@@ -4,7 +4,8 @@ from llama_index.core import VectorStoreIndex
 from signatures import GenerateSearchQuery, GenerateAnswer
 from dsp.utils.utils import deduplicate
 
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Literal, Any
+
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):
@@ -46,11 +47,10 @@ class MultiHopRAG(dspy.Module):
 
         for hop in range(self.max_hops):
             query_resp = self.generate_query[hop](context=context, question=question)
-            query = query_resp.query
+            query = query_resp.keywords
             print(f"Searching with {query=}")
             passages = self.retrieve(query).passages
             context = deduplicate(context + passages)
 
-        prediction = self.generate_answer(context=context, question=question)
+        prediction = self.generate_answer(context=context, question=question, messages=[])
         return dspy.Prediction(context=context, answer=prediction.answer)
-
