@@ -58,7 +58,6 @@ def get_vector_store_index(documents: List[Document], uri: str, db: str, embeddi
         SELECT 
         DISTINCT metadata_->>'file_name' AS filenames
         FROM {table}""".format(
-            db=db,
             table=embeddings_table,
         ))
         result = list(map(
@@ -75,10 +74,22 @@ def get_vector_store_index(documents: List[Document], uri: str, db: str, embeddi
     if not result:
         return reindex_vector_store(documents, uri, db, embeddings_table, embed_model, **config)
 
+    input_files = set(map(lambda doc: doc.metadata['file_name'], documents))
+    result = set(result)
+
+    files_to_index = input_files - result
+    files_to_index = list(filter(lambda doc: doc.metadata['file_name'] in files_to_index, documents))
+
     # Otherwise retrieve all the documents
     storage_context, vc = get_vector_storage_context(uri, db, embeddings_table, perform_setup=False)
-    return get_index_from_store(vc, storage_context, embed_model)
+    index = get_index_from_store(vc, storage_context, embed_model)
 
+    if files_to_index:
+        print("Found following files to index:", files_to_index)
+        for file in files_to_index:
+            index.insert(file)
+
+    return index
 
 def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: str, embed_model: str, embed_dim: Optional[int] = 768) -> VectorStoreIndex:
     conn = psycopg2.connect(uri)
