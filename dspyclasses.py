@@ -42,6 +42,8 @@ class MultiHopRAG(dspy.Module):
         self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
         self.max_hops = max_hops
 
+        self.message_history: List[dict[str, str]] = []
+
     def forward(self, question):
         context = []
 
@@ -52,5 +54,26 @@ class MultiHopRAG(dspy.Module):
             passages = self.retrieve(query).passages
             context = deduplicate(context + passages)
 
-        prediction = self.generate_answer(context=context, question=question, messages=[])
+        prediction = self.generate_answer(context=context, question=question, messages=self.format_history())
+        self.update_message_history([
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": prediction.answer},
+        ])
         return dspy.Prediction(context=context, answer=prediction.answer)
+
+    def update_message_history(self, messages: Union[List[dict[str, str]], str]):
+        if isinstance(messages, str):
+            raise NotImplementedError
+
+        self.message_history.extend(messages)
+
+    def format_history(self) -> str:
+        if not self.message_history:
+            return ""
+
+        messages = "\n".join(map(
+            lambda m: m["role"].title() + ": " + m["content"],
+            self.message_history
+        ))
+
+        return messages
