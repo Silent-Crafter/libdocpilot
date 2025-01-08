@@ -3,9 +3,9 @@ import psycopg2
 from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleDirectoryReader
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from parsers import CustomXLSXReader
+from parsers import CustomXLSXReader, CustomPDFReader
 from sqlalchemy import make_url
-from typing import List
+from typing import List, Optional
 
 
 def load_docs(dir: str, **kwargs) -> List[Document]:
@@ -17,6 +17,7 @@ def load_docs(dir: str, **kwargs) -> List[Document]:
     """
     file_extractors = {
         ".xlsx": CustomXLSXReader(),
+        ".pdf": CustomPDFReader(),
     }
 
     return SimpleDirectoryReader(
@@ -38,15 +39,21 @@ def get_total_nodes(conn, table, col = "id"):
     return cursor.fetchone()[0]
 
 
-def get_index_from_store(vector_store, embed_model):
+def get_index_from_store(vector_store, embed_model, **kwargs) -> VectorStoreIndex:
+    model_cache_folder = kwargs.get("model_cache_folder", "./models/")
     return VectorStoreIndex.from_vector_store(
         vector_store=vector_store,
-        embed_model=HuggingFaceEmbedding(model_name=embed_model),
-        show_progress=True
+        embed_model=HuggingFaceEmbedding(
+            model_name=embed_model,
+            cache_folder=model_cache_folder,
+            trust_remote_code=True,
+        ),
+        show_progress=True,
+        **kwargs
     )
 
 
-def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: str, embed_model: str):
+def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: str, embed_model: str, embed_dim: Optional[int] = 768) -> VectorStoreIndex:
     with psycopg2.connect(uri) as conn:
         with conn.cursor() as cursor:
             try:
@@ -55,7 +62,7 @@ def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: s
             except psycopg2.errors.UndefinedTable:
                 pass
 
-    storage_context, _ = create_vector_store(uri, db, embeddings_table)
+    storage_context, _ = create_vector_store(uri, db, embeddings_table, embed_dim=embed_dim)
 
     return embed_documents(documents, embed_model, storage_context)
 
