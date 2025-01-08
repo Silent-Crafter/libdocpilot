@@ -11,7 +11,13 @@ PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
 PG_DB_NAME = "postgres"
 
 def m_main():
-    docs = SimpleDirectoryReader("data", file_extractor={".xlsx": CustomXLSXReader()}).load_data()
+    docs = SimpleDirectoryReader(
+        "data",
+        file_extractor={
+            ".xlsx": CustomXLSXReader(),
+            ".pdf": CustomPDFReader(),
+        }
+    ).load_data()
 
     index = reindex_vector_store(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
 
