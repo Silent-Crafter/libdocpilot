@@ -7,7 +7,7 @@ class GenerateSearchQuery(dspy.Signature):
     keywords = dspy.OutputField()
 
 class GenerateAnswer(dspy.Signature):
-    """Answer question using facts from context only"""
+    """Answer question using facts from context only. If the context is empty or N/A Always Reply with 'Sorry i cannot assist you with that' regardless of question"""
     context = dspy.InputField(desc="will contain relevant facts")
     messages = dspy.InputField(desc="conversation history")
     question = dspy.InputField()
