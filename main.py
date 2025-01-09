@@ -34,7 +34,8 @@ def m_main():
     while True:
         out = multi_hop(input(">> ").strip())
         print(out.answer)
-        choice = input("History ([Y]/N)? ").strip().lower()
+        print("\n", "files accessed: ", out.sources, sep='')
+        choice = input("History (Y/[N])? ").strip().lower()
         if choice == 'n': continue
         print(chatbot.inspect_history())
         print()
@@ -59,7 +60,7 @@ def s_main():
     ).load_data()
 
     index = reindex_vector_store(document, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
-    multi_hop = MultiHopRAG(index=index, num_passages=5, max_hops=1)
+    multi_hop = MultiHopRAG(index=index, num_passages=10, max_hops=1)
     chatbot = dspy.LM(
         model="ollama/dolphin3",
         system_prompt="Strictly follow the given instructions and adhere to the given format",
@@ -72,7 +73,8 @@ def s_main():
     while True:
         out = multi_hop(input(">> ").strip())
         print(out.answer)
-        choice = input("History ([Y]/N)? ").strip().lower()
+        print("\n", "files accessed: ", out.sources)
+        choice = input("History (Y/[N])? ").strip().lower()
         if choice == 'n': continue
         print(chatbot.inspect_history())
         print()
