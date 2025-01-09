@@ -7,6 +7,7 @@ from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
 import os
 
+import re
 
 class CustomXLSXReader(BaseReader):
     def __init__(
@@ -90,12 +91,16 @@ class CustomPDFReader(BaseReader):
 
         docs = []
 
-        os.system(f"pdftotext -layout -nodiag '{file.as_posix()}'")
+        os.system(f"pdftotext -layout '{file.as_posix()}'")
         txt_file_name = file.name.replace(file.suffix, ".txt")
-        print('Reading', txt_file_name)
         text = ''
         with open("data/"+txt_file_name, "r", encoding="utf-8") as f:
             text = f.read()
+
+        # Small optimization to improve table recognition capability for an llm
+        # Also helps to reduce data loss while chunking as there will be far less characters
+        text = re.sub(" {6}", " ", text)
+
         os.remove(file.resolve().as_posix().replace(file.suffix, ".txt"))
 
         # Join text extracted from each page

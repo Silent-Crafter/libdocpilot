@@ -5,25 +5,31 @@ from llama_index.core import SimpleDirectoryReader
 
 from parsers import CustomXLSXReader, CustomPDFReader
 from dspyclasses import LlamaIndexRMClient, MultiHopRAG
-from utils import reindex_vector_store, create_vector_store
+from utils import reindex_vector_store, get_vector_store_index
 
 PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
 PG_DB_NAME = "postgres"
 
 def m_main():
-    docs = SimpleDirectoryReader("data", file_extractor={".xlsx": CustomXLSXReader()}).load_data()
+    docs = SimpleDirectoryReader(
+        "data",
+        file_extractor={
+            ".xlsx": CustomXLSXReader(),
+            ".pdf": CustomPDFReader(),
+        }
+    ).load_data()
 
-    index = reindex_vector_store(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
-
-    multi_hop = MultiHopRAG(index=index, num_passages=10, max_hops=1)
-
+    print(len(docs))
+    index = get_vector_store_index(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
+    multi_hop = MultiHopRAG(index=index, num_passages=5, max_hops=1)
     chatbot = dspy.LM(
-        model="ollama/granite-3.1-8b-instruct",
+        model="ollama/dolphin3",
         system_prompt="Strictly follow the given instructions and adhere to the given format",
         base_url="http://192.168.0.124:11434/",
+        # model_type="chat"
     )
 
-    dspy.settings.configure(lm=chatbot, rm=LlamaIndexRMClient)
+    dspy.settings.configure(lm=chatbot)
 
     while True:
         out = multi_hop(input(">> ").strip())
@@ -53,9 +59,7 @@ def s_main():
     ).load_data()
 
     index = reindex_vector_store(document, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
-
-    multi_hop = MultiHopRAG(index=index, num_passages=10, max_hops=1)
-
+    multi_hop = MultiHopRAG(index=index, num_passages=5, max_hops=1)
     chatbot = dspy.LM(
         model="ollama/dolphin3",
         system_prompt="Strictly follow the given instructions and adhere to the given format",
@@ -63,8 +67,7 @@ def s_main():
         model_type="chat"
         # base_url="http://localhost:11435/",
     )
-
-    dspy.settings.configure(lm=chatbot, rm=MultiHopRAG)
+    dspy.settings.configure(lm=chatbot)
 
     while True:
         out = multi_hop(input(">> ").strip())
