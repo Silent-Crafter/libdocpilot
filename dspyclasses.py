@@ -23,16 +23,26 @@ class LlamaIndexRMClient(dspy.Retrieve):
 
         nodes = self.retriever.retrieve(query)
 
+        good_nodes = list(filter(
+            lambda node: node.score >= 0.6,
+            nodes
+        ))
+
         passages = list(map(
             lambda node: node.text,
-            filter(
-                lambda node: node.score >= 0.6,
-                nodes
-            )
+            good_nodes
         ))
+
+        files = list(map(
+            lambda node: node.metadata["file_name"],
+            good_nodes
+        ))
+
+        files = deduplicate(files)
 
         return dspy.Prediction(
             passages=list(reversed(passages)),
+            files=files,
         )
 
 
@@ -42,29 +52,38 @@ class MultiHopRAG(dspy.Module):
 
         self.generate_query = [dspy.ChainOfThought(GenerateSearchQuery) for _ in range(max_hops)]
         self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
-        self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
+        self.generate_answer = dspy.ChainOfThought(GenerateAnswer, temperature=0.4)
         self.max_hops = max_hops
 
         self.message_history: List[dict[str, str]] = []
 
+        self.context = []
+        self.files = []
+
     def forward(self, question):
         context = []
+        files = []
 
         for hop in range(self.max_hops):
             query_resp = self.generate_query[hop](context=context, question=question)
             query = query_resp.keywords
-            print(f"Searching with {query=}")
-            passages = self.retrieve(query).passages
+            # print(f"Searching with {query=}")
+            nodes = self.retrieve(query)
+            passages = nodes.passages
+            files = deduplicate(files + nodes.files)
             context = deduplicate(context + passages)
 
-        prediction = self.generate_answer(context=context, question=question, messages=self.format_history())
+        self.context = deduplicate(self.context + context)
+        self.files = deduplicate(self.files + files)
+
+        prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
 
         self.update_message_history([
             {"role": "user", "content": question},
             {"role": "assistant", "content": prediction.answer},
         ])
 
-        return dspy.Prediction(context=context, answer=prediction.answer)
+        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files)
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
         if isinstance(messages, str):
