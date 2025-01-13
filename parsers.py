@@ -87,7 +87,7 @@ class CustomPDFReader(BaseReader):
         if not isinstance(file, Path):
             file = Path(file)
 
-        metadata = {"file_name": file.name}
+        metadata = {"file_name": file.name, "create_date": file.stat().st_ctime_ns}
 
         docs = []
 
