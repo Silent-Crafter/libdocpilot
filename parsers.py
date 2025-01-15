@@ -1,13 +1,12 @@
-import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+import re
 import pandas as pd
 import openpyxl
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
-import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from pypdf import PdfReader, PageObject
 
-import re
 
 class CustomXLSXReader(BaseReader):
     def __init__(
@@ -39,7 +38,6 @@ class CustomXLSXReader(BaseReader):
         for ws in wb.sheetnames:
             df = pd.read_excel(file, sheet_name=ws, **self._pandas_config)
 
-            sys.stdout.flush()
             text_list = [" ".join(df.columns.astype(str))]  # Concat headers
             text_list += (
                 df.astype(str)
@@ -91,17 +89,14 @@ class CustomPDFReader(BaseReader):
 
         docs = []
 
-        os.system(f"pdftotext -layout '{file.as_posix()}'")
-        txt_file_name = file.name.replace(file.suffix, ".txt")
+        reader = PdfReader(file.as_posix())
         text = ''
-        with open("data/"+txt_file_name, "r", encoding="utf-8") as f:
-            text = f.read()
+        for page in reader.pages:
+            text += page.extract_text(extraction_mode='layout') + '\n\n'
 
         # Small optimization to improve table recognition capability for an llm
         # Also helps to reduce data loss while chunking as there will be far less characters
         text = re.sub(" {6}", " ", text)
-
-        os.remove(file.resolve().as_posix().replace(file.suffix, ".txt"))
 
         # Join text extracted from each page
         docs.append(Document(text=text, metadata=metadata))
