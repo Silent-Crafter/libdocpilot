@@ -4,7 +4,7 @@ from llama_index.core import VectorStoreIndex
 from signatures import GenerateSearchQuery, GenerateAnswer
 from dsp.utils.utils import deduplicate
 
-from typing import Union, Optional, List, Literal, Any
+from typing import Union, Optional, List
 
 
 class LlamaIndexRMClient(dspy.Retrieve):
