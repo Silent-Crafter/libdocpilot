@@ -1,11 +1,10 @@
-import textwrap
 import dspy
 
 from llama_index.core import SimpleDirectoryReader
 
 from parsers import CustomXLSXReader, CustomPDFReader
-from dspyclasses import LlamaIndexRMClient, MultiHopRAG
-from utils import reindex_vector_store, get_vector_store_index
+from dspyclasses import MultiHopRAG
+from utils.llama_utils import reindex_vector_store, get_vector_store_index
 
 PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
 PG_DB_NAME = "postgres"
