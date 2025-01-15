@@ -1,11 +1,13 @@
-import re
 import pandas as pd
 import openpyxl
+
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
 from pathlib import Path
+from pypdf import PdfReader
+from preprocessors.pdf import PDFPreprocessor
+
 from typing import Any, Dict, List, Optional
-from pypdf import PdfReader, PageObject
 
 
 class CustomXLSXReader(BaseReader):
@@ -15,11 +17,13 @@ class CustomXLSXReader(BaseReader):
             concat_rows: bool = True,
             col_joiner: str = ",",
             row_joiner: str = "\n",
-            pandas_config: dict = {},
+            pandas_config: dict = None,
             **kwargs: Any
     ) -> None:
         """Init params."""
         super().__init__(*args, **kwargs)
+        if pandas_config is None:
+            pandas_config = {}
         self._concat_rows = concat_rows
         self._col_joiner = col_joiner
         self._row_joiner = row_joiner
@@ -63,7 +67,6 @@ class CustomXLSXReader(BaseReader):
                     for text in text_list
                 ])
 
-
         return documents
 
 
@@ -89,29 +92,25 @@ class CustomPDFReader(BaseReader):
 
         docs = []
 
-        reader = PdfReader(file.as_posix())
-        text = ''
-        for page in reader.pages:
-            text += page.extract_text(extraction_mode='layout') + '\n\n'
+        pdf = PdfReader(file)
 
-        # Small optimization to improve table recognition capability for an llm
-        # Also helps to reduce data loss while chunking as there will be far less characters
-        text = re.sub(" {6}", " ", text)
+        preprocessor = PDFPreprocessor(pdf)
+        pages = preprocessor.forward()
 
-        # Join text extracted from each page
-        docs.append(Document(text=text, metadata=metadata))
+        for page in pages:
+            page = list(filter(lambda x: x.strip(), page))
+            text = "\n".join(page)
+            # Join text extracted from each page
+            docs.append(Document(text=text, metadata=metadata))
 
         return docs
 
-if __name__ == '__main__':
-    from llama_index.core import SimpleDirectoryReader
 
-    # documents = SimpleDirectoryReader(
-    #     "data",
-    #     file_extractor={".xlsx": CustomXLSXReader(), ".pdf": CustomPDFReader()},
-    #     required_exts=['.pdf']
-    # ).load_data()
+if __name__ == '__main__':
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     documents = CustomPDFReader().load_data(Path("data/Control Plan - 20. winding CP rev-28.pdf"))
 
+    print(len(documents))
     print(documents[0].text)
