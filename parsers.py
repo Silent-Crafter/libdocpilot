@@ -38,7 +38,7 @@ class CustomXLSXReader(BaseReader):
 
         wb = openpyxl.load_workbook(file)
 
-        documents: list[Document] = []
+        docs: list[Document] = []
         for ws in wb.sheetnames:
             df = pd.read_excel(file, sheet_name=ws, **self._pandas_config)
 
@@ -54,12 +54,12 @@ class CustomXLSXReader(BaseReader):
                 metadata.update(extra_info)
 
             if self._concat_rows:
-                documents.append(Document(
+                docs.append(Document(
                     text=self._row_joiner.join(text_list),
                     metadata=metadata,
                 ))
             else:
-                documents.extend([
+                docs.extend([
                     Document(
                         text=text,
                         metadata=metadata,
@@ -67,7 +67,7 @@ class CustomXLSXReader(BaseReader):
                     for text in text_list
                 ])
 
-        return documents
+        return docs
 
 
 class CustomPDFReader(BaseReader):

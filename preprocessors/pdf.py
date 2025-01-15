@@ -66,6 +66,8 @@ class PDFPreprocessor:
             counter = -1
         elif direction == "down":
             counter = 0
+        else:
+            raise ValueError("direction must be 'up' or 'down'")
 
         while condition(counter):
             embeddings: List[torch.Tensor] = []
