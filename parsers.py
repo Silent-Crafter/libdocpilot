@@ -1,13 +1,14 @@
-import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 import pandas as pd
 import openpyxl
+
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
-import os
+from pathlib import Path
+from pypdf import PdfReader
+from preprocessors.pdf import PDFPreprocessor
 
-import re
+from typing import Any, Dict, List, Optional
+
 
 class CustomXLSXReader(BaseReader):
     def __init__(
@@ -16,11 +17,13 @@ class CustomXLSXReader(BaseReader):
             concat_rows: bool = True,
             col_joiner: str = ",",
             row_joiner: str = "\n",
-            pandas_config: dict = {},
+            pandas_config: dict = None,
             **kwargs: Any
     ) -> None:
         """Init params."""
         super().__init__(*args, **kwargs)
+        if pandas_config is None:
+            pandas_config = {}
         self._concat_rows = concat_rows
         self._col_joiner = col_joiner
         self._row_joiner = row_joiner
@@ -35,11 +38,10 @@ class CustomXLSXReader(BaseReader):
 
         wb = openpyxl.load_workbook(file)
 
-        documents: list[Document] = []
+        docs: list[Document] = []
         for ws in wb.sheetnames:
             df = pd.read_excel(file, sheet_name=ws, **self._pandas_config)
 
-            sys.stdout.flush()
             text_list = [" ".join(df.columns.astype(str))]  # Concat headers
             text_list += (
                 df.astype(str)
@@ -52,12 +54,12 @@ class CustomXLSXReader(BaseReader):
                 metadata.update(extra_info)
 
             if self._concat_rows:
-                documents.append(Document(
+                docs.append(Document(
                     text=self._row_joiner.join(text_list),
                     metadata=metadata,
                 ))
             else:
-                documents.extend([
+                docs.extend([
                     Document(
                         text=text,
                         metadata=metadata,
@@ -65,8 +67,7 @@ class CustomXLSXReader(BaseReader):
                     for text in text_list
                 ])
 
-
-        return documents
+        return docs
 
 
 class CustomPDFReader(BaseReader):
@@ -87,36 +88,29 @@ class CustomPDFReader(BaseReader):
         if not isinstance(file, Path):
             file = Path(file)
 
-        metadata = {"file_name": file.name}
+        metadata = {"file_name": file.name, "create_date": file.stat().st_ctime_ns}
 
         docs = []
 
-        os.system(f"pdftotext -layout '{file.as_posix()}'")
-        txt_file_name = file.name.replace(file.suffix, ".txt")
-        text = ''
-        with open("data/"+txt_file_name, "r", encoding="utf-8") as f:
-            text = f.read()
+        pdf = PdfReader(file)
 
-        # Small optimization to improve table recognition capability for an llm
-        # Also helps to reduce data loss while chunking as there will be far less characters
-        text = re.sub(" {6}", " ", text)
+        preprocessor = PDFPreprocessor(pdf)
+        pages = preprocessor.forward()
 
-        os.remove(file.resolve().as_posix().replace(file.suffix, ".txt"))
-
-        # Join text extracted from each page
-        docs.append(Document(text=text, metadata=metadata))
+        for page in pages:
+            page = list(filter(lambda x: x.strip(), page))
+            text = "\n".join(page)
+            # Join text extracted from each page
+            docs.append(Document(text=text, metadata=metadata))
 
         return docs
 
-if __name__ == '__main__':
-    from llama_index.core import SimpleDirectoryReader
 
-    # documents = SimpleDirectoryReader(
-    #     "data",
-    #     file_extractor={".xlsx": CustomXLSXReader(), ".pdf": CustomPDFReader()},
-    #     required_exts=['.pdf']
-    # ).load_data()
+if __name__ == '__main__':
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     documents = CustomPDFReader().load_data(Path("data/Control Plan - 20. winding CP rev-28.pdf"))
 
+    print(len(documents))
     print(documents[0].text)

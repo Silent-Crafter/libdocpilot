@@ -3,15 +3,17 @@ import psycopg2
 from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleDirectoryReader
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from parsers import CustomXLSXReader, CustomPDFReader
 from sqlalchemy import make_url
+
+from parsers import CustomXLSXReader, CustomPDFReader
+
 from typing import List, Optional
 
 
-def load_docs(dir: str, **kwargs) -> List[Document]:
+def load_docs(doc_dir: str, **kwargs) -> List[Document]:
     """
     Load documents from a directory using SimpleDirectoryReader of LlamaIndex
-    :param dir: the directory to load documents from
+    :param doc_dir: the directory to load documents from
     :param kwargs: additional arguments to pass to SimpleDirectoryReader
     :return: List of Document
     """
@@ -21,19 +23,20 @@ def load_docs(dir: str, **kwargs) -> List[Document]:
     }
 
     return SimpleDirectoryReader(
-        dir,
+        doc_dir,
         file_extractor=file_extractors,
         **kwargs
     ).load_data()
 
-def get_total_nodes(conn, table, col = "id"):
+
+def get_total_nodes(conn, table, col="id"):
     cursor = conn.cursor()
     cursor.execute(f"SELECT count({col}) FROM {table}")
     return cursor.fetchone()[0]
 
 
 def get_index_from_store(vector_store, storage_context, embed_model, **kwargs) -> VectorStoreIndex:
-    model_cache_folder = kwargs.get("model_cache_folder", "./models/")
+    model_cache_folder = kwargs.get("model_cache_folder", "../models/")
     return VectorStoreIndex.from_vector_store(
         vector_store=vector_store,
         embed_model=HuggingFaceEmbedding(
@@ -47,7 +50,8 @@ def get_index_from_store(vector_store, storage_context, embed_model, **kwargs) -
     )
 
 
-def get_vector_store_index(documents: List[Document], uri: str, db: str, embeddings_table: str, embed_model: str, **config) -> VectorStoreIndex:
+def get_vector_store_index(documents: List[Document], uri: str, db: str, embeddings_table: str, embed_model: str,
+                           **config) -> VectorStoreIndex:
     conn = psycopg2.connect(uri)
     cursor = conn.cursor()
 
@@ -91,7 +95,9 @@ def get_vector_store_index(documents: List[Document], uri: str, db: str, embeddi
 
     return index
 
-def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: str, embed_model: str, embed_dim: Optional[int] = 768) -> VectorStoreIndex:
+
+def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: str, embed_model: str,
+                         embed_dim: Optional[int] = 768) -> VectorStoreIndex:
     conn = psycopg2.connect(uri)
     cursor = conn.cursor()
 
@@ -109,7 +115,8 @@ def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: s
     return embed_documents(documents, embed_model, storage_context)
 
 
-def embed_documents(documents: List[Document], embed_model: str, storage_context: StorageContext, **kwargs) -> VectorStoreIndex:
+def embed_documents(documents: List[Document], embed_model: str, storage_context: StorageContext,
+                    **kwargs) -> VectorStoreIndex:
     """
     Generate embeddings and store in the vector store. Will store the embeddings regardless of whether they are already present.
     :param documents: list of documents
@@ -118,7 +125,7 @@ def embed_documents(documents: List[Document], embed_model: str, storage_context
     :param kwargs: Additional arguments/options to be passed to VectorStoreIndex.from_documents()
     :return: the index
     """
-    model_cache_folder = kwargs.get("model_cache_folder", "./models/")
+    model_cache_folder = kwargs.get("model_cache_folder", "../models/")
     show_progress = kwargs.get("show_progress", True)
 
     return VectorStoreIndex.from_documents(
@@ -133,13 +140,14 @@ def embed_documents(documents: List[Document], embed_model: str, storage_context
         **kwargs,
     )
 
+
 def get_vector_storage_context(uri, db, table, **kwargs) -> (StorageContext, PGVectorStore):
     """
     Create a vector store to store embeddings from a URI and a database and table
     :param uri: Postgres URI
     :param db: Postgres database
     :param table: Postgres table
-    :param kwargs: extra configuration options like embed_dim, etc
+    :param kwargs: extra configuration options like embed_dim, etc.
     :return: The vector store and storage context
     """
     embed_dim = kwargs.pop('embed_dim', 768)
