@@ -83,7 +83,7 @@ class MultiHopRAG(dspy.Module):
             {"role": "assistant", "content": prediction.answer},
         ])
 
-        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files)
+        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files, images=prediction.images)
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
         if isinstance(messages, str):

@@ -92,9 +92,7 @@ class CustomPDFReader(BaseReader):
 
         docs = []
 
-        pdf = PdfReader(file)
-
-        preprocessor = PDFPreprocessor(pdf)
+        preprocessor = PDFPreprocessor(file)
         pages = preprocessor.forward()
 
         for page in pages:
@@ -107,9 +105,6 @@ class CustomPDFReader(BaseReader):
 
 
 if __name__ == '__main__':
-    import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
     documents = CustomPDFReader().load_data(Path("data/Control Plan - 20. winding CP rev-28.pdf"))
 
     print(len(documents))
