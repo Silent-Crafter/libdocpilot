@@ -1,11 +1,15 @@
 import dspy
 
 from llama_index.core import VectorStoreIndex
-from signatures import GenerateSearchQuery, GenerateAnswer
+from signatures import GenerateSearchQuery, GenerateAnswer, ImageRag
 from dsp.utils.utils import deduplicate
 
 from typing import Union, Optional, List
 
+from notlogging.notlogger import NotALogger
+
+logger = NotALogger()
+logger.enable = False
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):
@@ -47,13 +51,13 @@ class LlamaIndexRMClient(dspy.Retrieve):
 
 
 class MultiHopRAG(dspy.Module):
-    def __init__(self, index: VectorStoreIndex, num_passages=3, max_hops=3):
+    def __init__(self, index: VectorStoreIndex, num_passages=3):
         super().__init__()
 
-        self.generate_query = [dspy.ChainOfThought(GenerateSearchQuery) for _ in range(max_hops)]
+        self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
         self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
         self.generate_answer = dspy.ChainOfThought(GenerateAnswer, temperature=0.4)
-        self.max_hops = max_hops
+        self.search_images = dspy.ChainOfThought(ImageRag, temperature=0.4)
 
         self.message_history: List[dict[str, str]] = []
 
@@ -64,26 +68,29 @@ class MultiHopRAG(dspy.Module):
         context = []
         files = []
 
-        for hop in range(self.max_hops):
-            query_resp = self.generate_query[hop](context=context, question=question)
-            query = query_resp.keywords
-            # print(f"Searching with {query=}")
-            nodes = self.retrieve(query)
-            passages = nodes.passages
-            files = deduplicate(files + nodes.files)
-            context = deduplicate(context + passages)
+        query_resp = self.generate_query(context=context, question=question)
+        query = query_resp.keywords
+
+        logger.info(f"Query: {query}")
+        nodes = self.retrieve(query)
+        passages = nodes.passages
+
+        files = deduplicate(files + nodes.files)
+        context = deduplicate(context + passages)
 
         self.context = deduplicate(self.context + context)
         self.files = deduplicate(self.files + files)
 
         prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
 
+        images = self.search_images(context=self.context, answer=prediction.answer)
+
         self.update_message_history([
             {"role": "user", "content": question},
             {"role": "assistant", "content": prediction.answer},
         ])
 
-        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files, images=prediction.images)
+        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files, image_ids=images.image_ids)
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
         if isinstance(messages, str):
