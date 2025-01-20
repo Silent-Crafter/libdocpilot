@@ -72,7 +72,7 @@ def get_total_nodes(conn, table, col="id"):
 
 
 def get_index_from_store(vector_store, storage_context, embed_model, **kwargs) -> VectorStoreIndex:
-    model_cache_folder = kwargs.get("model_cache_folder", "../models/")
+    model_cache_folder = kwargs.get("model_cache_folder", "models/")
     return VectorStoreIndex.from_vector_store(
         vector_store=vector_store,
         embed_model=HuggingFaceEmbedding(
