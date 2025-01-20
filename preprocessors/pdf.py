@@ -6,7 +6,12 @@ import pymupdf
 
 from datetime import datetime
 from utils.embed_utils import get_embedder, compute_similarity_matrix
-from typing import List, Optional, Union, Literal, Callable, Any
+from typing import List, Optional, Union, Literal
+
+from notlogging.notlogger import NotALogger
+
+logger = NotALogger()
+logger.enable = False
 
 class PDFPreprocessor:
 
@@ -59,28 +64,28 @@ class PDFPreprocessor:
         file_prefix = txt_prefix
 
         # Extract images with their bounding boxes
-        images = []
+        image_xrefs = []
         rects = []
         file_names = []
         for page in self.mupdf.pages():
             r = []
             for image in page.get_images():
-                images.append(self.mupdf.extract_image(image[0]))
+                image_xrefs.append(image[0])
                 r.append(page.get_image_bbox(image[7]))
                 # Delete image from pdf
-                page.delete_image(image[0])
+                # page.delete_image(image[0])
             rects.append(r)
 
         # Save images in out_path folder
         out_path = os.path.abspath(out_path)
         try:
-            for image in images:
+            for xref in image_xrefs:
+                image = self.mupdf.extract_image(xref)
                 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                fname = f"{file_prefix}{timestamp}.{image['ext']}"
+                fname = f"{file_prefix}-{timestamp}-{xref}.{image['ext']}"
                 file_names.append(fname)
-                fp = open(os.path.join(out_path, fname), "wb")
-                fp.write(image['image'])
-                fp.close()
+                with open(os.path.join(out_path, fname), "wb") as fp:
+                    fp.write(image['image'])
         except KeyError:
             raise RuntimeError(f"unable to extract image data")
 
@@ -181,8 +186,8 @@ class PDFPreprocessor:
         try:
             self.replace_images("out_images/")
         except Exception as e:
-            print(f"Unexpected error: {e}")
-            print("Skipping image-caption pairing")
+            logger.error(f"Unexpected error: {e}")
+            logger.info("Skipping image-caption pairing")
 
         pages = self.deduplicate()
         pages = self.deduplicate(page_lines=pages, direction="up")
@@ -192,8 +197,16 @@ class PDFPreprocessor:
     def cleanup(self):
         if self.pdf: self.pdf.close()
         self.mupdf.close()
-        shutil.rmtree(os.path.join(os.getcwd(), self.artifact_loc))
-        # os.rmdir(os.path.join(os.getcwd(), self.artifact_loc))
+        dir = os.path.join(os.getcwd(), self.artifact_loc)
+        shutil.rmtree(dir)
+        if os.path.exists(dir): os.rmdir(dir)
 
     def __call__(self, *args, **kwargs):
         return self.forward()
+
+
+if __name__ == '__main__':
+    # preprocessor = PDFPreprocessor("../data/Operating Procedure-109.NA-DC-ENG-OP-109-08 Roder Winding copy.pdf")
+    # preprocessor()
+    for key, value in os.environ.items():
+        print(f"{key}={value}")

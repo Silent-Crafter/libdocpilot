@@ -1,20 +1,44 @@
+import os
+
 import psycopg2
 
 from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleDirectoryReader
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from sqlalchemy import make_url
-
 from parsers import CustomXLSXReader, CustomPDFReader
+from notlogging.notlogger import NotALogger
 
-from typing import List, Optional
+from typing import List, Optional, Union
+
+logger = NotALogger()
+logger.enable = False
 
 
-def load_docs(doc_dir: str, **kwargs) -> List[Document]:
+def get_indexed_nodes(url: str, db: str, embedding_table: str) -> Union[List[str], None]:
+    result = []
+    try:
+        conn = psycopg2.connect(url + '/' + db)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT DISTINCT metadata_->>'file_name' FROM {embedding_table}")
+        result = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logger.error("Unexpected Error: ", e)
+
+    if result:
+        return list(map(lambda x: x[0], result))
+
+
+def load_docs(doc_dir: str, uri: str, db: str, embedding_table: str, **kwargs) -> List[Document]:
     """
     Load documents from a directory using SimpleDirectoryReader of LlamaIndex
     :param doc_dir: the directory to load documents from
     :param kwargs: additional arguments to pass to SimpleDirectoryReader
+    :param uri: the uri of pgvector database
+    :param db: the database name
+    :param embedding_table: the table name of embeddings
     :return: List of Document
     """
     file_extractors = {
@@ -22,9 +46,21 @@ def load_docs(doc_dir: str, **kwargs) -> List[Document]:
         ".pdf": CustomPDFReader(),
     }
 
+    # Smart loading
+    files = filter(lambda f: f[0] != '.' and os.path.isfile(os.path.join(doc_dir, f)), os.listdir(doc_dir))
+    indexed_nodes = get_indexed_nodes(uri, db, embedding_table)
+
+    if indexed_nodes:
+        input_files = filter(lambda f: f not in indexed_nodes, files)
+    else:
+        input_files = files
+
+    input_files = list(map(lambda f: os.path.join(doc_dir, f), input_files))
+
     return SimpleDirectoryReader(
         doc_dir,
         file_extractor=file_extractors,
+        input_files=input_files,
         **kwargs
     ).load_data()
 
@@ -50,46 +86,32 @@ def get_index_from_store(vector_store, storage_context, embed_model, **kwargs) -
     )
 
 
-def get_vector_store_index(documents: List[Document], uri: str, db: str, embeddings_table: str, embed_model: str,
-                           **config) -> VectorStoreIndex:
-    conn = psycopg2.connect(uri)
-    cursor = conn.cursor()
+def get_vector_store_index(
+        documents: List[Document],
+        uri: str,
+        db: str,
+        embeddings_table: str,
+        embed_model: str,
+        reindex: Optional[bool] = False,
+) -> VectorStoreIndex:
 
-    result = []
+    nodes = get_indexed_nodes(uri, db, embeddings_table)
 
-    try:
-        cursor.execute("""
-        SELECT 
-        DISTINCT metadata_->>'file_name' AS filenames
-        FROM {table}""".format(
-            table=embeddings_table,
-        ))
-        result = list(map(
-            lambda row: row[0],
-            cursor.fetchall(),
-        ))
-    except psycopg2.errors.UndefinedTable:
-        pass
-
-    cursor.close()
-    conn.close()
-
-    # If there are no existing records, index all documents
-    if not result:
-        return reindex_vector_store(documents, uri, db, embeddings_table, embed_model, **config)
-
-    input_files = set(map(lambda doc: doc.metadata['file_name'], documents))
-    result = set(result)
-
-    files_to_index = input_files - result
-    files_to_index = list(filter(lambda doc: doc.metadata['file_name'] in files_to_index, documents))
+    # Index files that haven't already been indexed
+    # if nodes:
+    files_to_index = list(filter(lambda node: node.metadata['file_name'] not in nodes if nodes else True, documents))
+    # else:
+    #     files_to_index = documents
 
     # Otherwise retrieve all the documents
+    if reindex:
+        return reindex_vector_store(documents, uri, db, embeddings_table, embed_model)
+
     storage_context, vc = get_vector_storage_context(uri, db, embeddings_table, perform_setup=False)
     index = get_index_from_store(vc, storage_context, embed_model)
 
     if files_to_index:
-        print("Found following files to index:", files_to_index)
+        logger.log(f"Found following extra files to index: {files_to_index}", "debug")
         for file in files_to_index:
             index.insert(file)
 
@@ -110,7 +132,7 @@ def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: s
     cursor.close()
     conn.close()
 
-    storage_context, _ = get_vector_storage_context(uri, db, embeddings_table, embed_dim=embed_dim)
+    storage_context, _ = get_vector_storage_context(uri, db, embeddings_table, embed_dim=embed_dim, perform_setup=False)
 
     return embed_documents(documents, embed_model, storage_context)
 
