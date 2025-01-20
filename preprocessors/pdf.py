@@ -1,28 +1,35 @@
+import shutil
 import torch
+import os
+import pypdf
+import pymupdf
 
-from os import PathLike
-from pypdf import PdfReader, PageObject
-
+from datetime import datetime
 from utils.embed_utils import get_embedder, compute_similarity_matrix
-
-from typing import List, Optional, Union, Literal
+from typing import List, Optional, Union, Literal, Callable, Any
 
 class PDFPreprocessor:
 
-    def __init__(self, file: Union[str, PathLike[str], PdfReader]) -> None:
-        if not isinstance(file, (str, PathLike, PdfReader)):
-            raise TypeError(f"Expected str, PathLike, PdfReader got {type(file).__name__}")
+    def __init__(self, file: Union[str, os.PathLike[str]]) -> None:
+        if not isinstance(file, (str, os.PathLike)):
+            raise TypeError(f"Expected str, os.PathLike got {type(file).__name__}")
 
-        if not isinstance(file, PdfReader):
-            self.pdf = PdfReader(file)
-        else:
-            self.pdf = file
+        self.pdf = None
+        self.pages: List[pypdf.PageObject] = []
 
-        self.pages: List[PageObject] = self.pdf.pages
+        self.mupdf = pymupdf.open(file)
+
+        self.artifact_loc = ".preprocessor-artifacts"
+        dir = os.path.join(os.getcwd(), self.artifact_loc)
+        if not os.path.exists(dir):
+            os.mkdir(dir)
 
     def _pages_into_lines(self, strip_rotated: Optional[bool] = False) -> List[List[str]]:
         if not self.pdf.pages:
             raise RuntimeError("No pages found")
+
+        if not self.pages:
+            self.pages = self.pdf.pages
 
         lines: List[List[str]] = []
         for page in self.pages:
@@ -36,11 +43,67 @@ class PDFPreprocessor:
 
         return lines
 
+    def _use_deimaged_pdf(self):
+        self.pdf = pypdf.PdfReader(os.path.join(os.getcwd(), self.artifact_loc, "artifact.pdf"))
+        self.pages = self.pdf.pages
+
+    def replace_images(
+        self,
+        out_path: Optional[Union[str, os.PathLike[str]]] = None,
+        prefix: Optional[str] = None,
+    ):
+        if not isinstance(out_path, (str, os.PathLike)):
+            raise TypeError(f"Expected str, os.PathLike, got {type(out_path).__name__}")
+
+        txt_prefix = prefix if prefix else "img"
+        file_prefix = txt_prefix
+
+        # Extract images with their bounding boxes
+        images = []
+        rects = []
+        file_names = []
+        for page in self.mupdf.pages():
+            r = []
+            for image in page.get_images():
+                images.append(self.mupdf.extract_image(image[0]))
+                r.append(page.get_image_bbox(image[7]))
+                # Delete image from pdf
+                page.delete_image(image[0])
+            rects.append(r)
+
+        # Save images in out_path folder
+        out_path = os.path.abspath(out_path)
+        try:
+            for image in images:
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                fname = f"{file_prefix}{timestamp}.{image['ext']}"
+                file_names.append(fname)
+                fp = open(os.path.join(out_path, fname), "wb")
+                fp.write(image['image'])
+                fp.close()
+        except KeyError:
+            raise RuntimeError(f"unable to extract image data")
+
+
+        # Replace images with text
+        for page_no, page in enumerate(list(self.mupdf.pages())):
+            tw = pymupdf.TextWriter(page.rect)
+            for img_no, rect in enumerate(rects[page_no]):
+                cx = (rect.x0 + rect.x1) // 2
+                cy = (rect.y0 + rect.y1) // 2
+                tw.append((cx, cy), f"${file_names[img_no]}$")
+            tw.write_text(page)
+
+        # Save modified pdf
+        self.mupdf.ez_save(os.path.join(os.getcwd(), self.artifact_loc, "artifact.pdf"))
+
+
     def deduplicate(self, page_lines: Optional[List[List[str]]] = None, direction: Optional[Literal["up", "down"]] = "down") -> List[List[str]]:
         """
-        Naive, loose approach to deduplicate headers and footers
+        greedy approach to deduplicate headers and footers
         :return:
         """
+        self._use_deimaged_pdf()
         lines = self._pages_into_lines(strip_rotated=True) if not page_lines else page_lines
 
         _, embed = get_embedder("hf/ibm-granite/granite-embedding-278m-multilingual")
@@ -115,9 +178,22 @@ class PDFPreprocessor:
 
 
     def forward(self):
+        try:
+            self.replace_images("out_images/")
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            print("Skipping image-caption pairing")
+
         pages = self.deduplicate()
         pages = self.deduplicate(page_lines=pages, direction="up")
+        self.cleanup()
         return pages
+
+    def cleanup(self):
+        if self.pdf: self.pdf.close()
+        self.mupdf.close()
+        shutil.rmtree(os.path.join(os.getcwd(), self.artifact_loc))
+        # os.rmdir(os.path.join(os.getcwd(), self.artifact_loc))
 
     def __call__(self, *args, **kwargs):
         return self.forward()
