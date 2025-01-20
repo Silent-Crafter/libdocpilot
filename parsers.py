@@ -4,11 +4,14 @@ import openpyxl
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
 from pathlib import Path
-from pypdf import PdfReader
 from preprocessors.pdf import PDFPreprocessor
 
 from typing import Any, Dict, List, Optional
 
+from notlogging.notlogger import NotALogger
+
+logger = NotALogger()
+logger.enable = False
 
 class CustomXLSXReader(BaseReader):
     def __init__(
@@ -92,6 +95,7 @@ class CustomPDFReader(BaseReader):
 
         docs = []
 
+        logger.log(f"Processing {file.name}", "DEBUG")
         preprocessor = PDFPreprocessor(file)
         pages = preprocessor.forward()
 
