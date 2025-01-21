@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from notlogging.notlogger import NotALogger
 
-logger = NotALogger()
+logger = NotALogger(__name__)
 logger.enable = False
 
 class CustomXLSXReader(BaseReader):

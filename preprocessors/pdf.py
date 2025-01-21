@@ -10,7 +10,7 @@ from typing import List, Optional, Union, Literal
 
 from notlogging.notlogger import NotALogger
 
-logger = NotALogger()
+logger = NotALogger(__name__)
 logger.enable = False
 
 class PDFPreprocessor:

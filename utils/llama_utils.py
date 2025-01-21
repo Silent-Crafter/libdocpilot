@@ -11,7 +11,7 @@ from notlogging.notlogger import NotALogger
 
 from typing import List, Optional, Union
 
-logger = NotALogger()
+logger = NotALogger(__name__)
 logger.enable = False
 
 
