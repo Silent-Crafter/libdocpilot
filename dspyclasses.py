@@ -8,7 +8,7 @@ from typing import Union, Optional, List
 
 from notlogging.notlogger import NotALogger
 
-logger = NotALogger()
+logger = NotALogger(__name__)
 logger.enable = False
 
 class LlamaIndexRMClient(dspy.Retrieve):
@@ -75,15 +75,23 @@ class MultiHopRAG(dspy.Module):
         nodes = self.retrieve(query)
         passages = nodes.passages
 
+        yield {"type": "query", "content": passages}
+
         files = deduplicate(files + nodes.files)
         context = deduplicate(context + passages)
 
         self.context = deduplicate(self.context + context)
         self.files = deduplicate(self.files + files)
 
+        yield {"type": "files", "content": self.files}
+
         prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
 
+        yield {"type": "answer", "content": prediction.answer}
+
         images = self.search_images(context=self.context, answer=prediction.answer)
+
+        yield {"type": "image", "content": images.image_ids}
 
         self.update_message_history([
             {"role": "user", "content": question},
@@ -108,3 +116,7 @@ class MultiHopRAG(dspy.Module):
         ))
 
         return messages
+
+    def __call__(self, *args, **kwargs):
+        for resp in self.forward(*args, **kwargs):
+            yield next(resp)
