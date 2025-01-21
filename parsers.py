@@ -99,11 +99,14 @@ class CustomPDFReader(BaseReader):
         preprocessor = PDFPreprocessor(file)
         pages = preprocessor.forward()
 
+        text = ""
         for page in pages:
             page = list(filter(lambda x: x.strip(), page))
-            text = "\n".join(page)
-            # Join text extracted from each page
-            docs.append(Document(text=text, metadata=metadata))
+            text += "\n".join(page)
+            text += "\n\n"
+
+        # Join text extracted from each page
+        docs.append(Document(text=text, metadata=metadata))
 
         return docs
 
