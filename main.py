@@ -1,8 +1,7 @@
-import textwrap
 import dspy
 
 from dspyclasses import MultiHopRAG
-from utils.llama_utils import get_vector_store_index, embed_documents, load_docs
+from utils.llama_utils import get_vector_store_index, load_docs
 from notlogging.notlogger import NotALogger
 
 PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"

@@ -25,7 +25,7 @@ def get_indexed_nodes(url: str, db: str, embedding_table: str) -> Union[List[str
         cursor.close()
         conn.close()
     except Exception as e:
-        logger.error("Unexpected Error: ", e)
+        logger.error(f"Unexpected Error: {e}")
 
     if result:
         return list(map(lambda x: x[0], result))
@@ -156,6 +156,7 @@ def embed_documents(documents: List[Document], embed_model: str, storage_context
             model_name=embed_model,
             cache_folder=model_cache_folder,
             trust_remote_code=True,
+            device="cpu",
         ),
         show_progress=show_progress,
         storage_context=storage_context,

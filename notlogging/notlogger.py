@@ -48,7 +48,7 @@ class NotALogger:
 
         if self.enable: self._print_error(message, self.module)
 
-    def _log_file(self, message: str, log_type: Union[Literal['info', 'error'], str] = "info"):
+    def _log_file(self, message: Union[str, List[str]], log_type: Union[Literal['info', 'error'], str] = "info"):
         raise NotImplementedError
 
     @staticmethod
