@@ -14,7 +14,7 @@ If the context is empty or N/A. Always Reply with 'Sorry I cannot assist you wit
     context = dspy.InputField(desc="will contain relevant facts")
     messages = dspy.InputField(desc="conversation history")
     question = dspy.InputField()
-    answer = dspy.OutputField(desc="answer with relevant image ids")
+    answer = dspy.OutputField(desc="answer")
 
 class ImageRag(dspy.Signature):
     """

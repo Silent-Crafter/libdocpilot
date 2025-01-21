@@ -28,7 +28,7 @@ class LlamaIndexRMClient(dspy.Retrieve):
         nodes = self.retriever.retrieve(query)
 
         good_nodes = list(filter(
-            lambda node: node.score >= 0.6,
+            lambda node: node.score >= 0.64,
             nodes
         ))
 
@@ -38,15 +38,27 @@ class LlamaIndexRMClient(dspy.Retrieve):
         ))
 
         files = list(map(
-            lambda node: node.metadata["file_name"],
+            lambda node: (node.score, node.metadata["file_name"]),
             good_nodes
         ))
 
-        files = deduplicate(files)
+        visited = set()
+        files = [f for f in files if not (f in visited or visited.add(f))]
+
+        scores = list(map(
+            lambda node: node[0],
+            files
+        ))
+
+        files = list(map(
+            lambda node: node[1],
+            files
+        ))
 
         return dspy.Prediction(
             passages=list(reversed(passages)),
             files=files,
+            scores=scores
         )
 
 
@@ -56,8 +68,8 @@ class MultiHopRAG(dspy.Module):
 
         self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
         self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
-        self.generate_answer = dspy.ChainOfThought(GenerateAnswer, temperature=0.4)
-        self.search_images = dspy.ChainOfThought(ImageRag, temperature=0.4)
+        self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
+        # self.search_images = dspy.ChainOfThought(ImageRag, temperature=0.4)
 
         self.message_history: List[dict[str, str]] = []
 
@@ -70,18 +82,18 @@ class MultiHopRAG(dspy.Module):
 
         query_resp = self.generate_query(context=context, question=question)
         query = query_resp.keywords
+        # query = question
+        yield {"type": "query", "content": query}
 
         logger.info(f"Query: {query}")
         nodes = self.retrieve(query)
         passages = nodes.passages
 
-        yield {"type": "query", "content": passages}
-
         files = deduplicate(files + nodes.files)
         context = deduplicate(context + passages)
 
-        self.context = deduplicate(self.context + context)
-        self.files = deduplicate(self.files + files)
+        self.context = deduplicate(context + self.context)
+        self.files = deduplicate(files + self.files)
 
         yield {"type": "files", "content": self.files}
 
@@ -89,16 +101,16 @@ class MultiHopRAG(dspy.Module):
 
         yield {"type": "answer", "content": prediction.answer}
 
-        images = self.search_images(context=self.context, answer=prediction.answer)
+        # images = self.search_images(context=self.context, answer=prediction.answer)
 
-        yield {"type": "image", "content": images.image_ids}
+        # yield {"type": "image", "content": images.image_ids}
 
         self.update_message_history([
             {"role": "user", "content": question},
             {"role": "assistant", "content": prediction.answer},
         ])
 
-        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files, image_ids=images.image_ids)
+        return dspy.Prediction(context=context, answer=prediction.answer, sources=self.files)
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
         if isinstance(messages, str):
@@ -118,5 +130,4 @@ class MultiHopRAG(dspy.Module):
         return messages
 
     def __call__(self, *args, **kwargs):
-        for resp in self.forward(*args, **kwargs):
-            yield next(resp)
+        raise NotImplementedError("Call forward() method directly.")

@@ -12,13 +12,10 @@ logger = NotALogger(__name__)
 logger.enable = True
 
 def m_main():
-    def print_answer(answer: str):
-        print("\n".join(textwrap.wrap(answer, 100, drop_whitespace=False, replace_whitespace=False)))
-
     message_handler = {
         "query": logger.info,
         "files": logger.info,
-        "images": print,
+        "image": print,
         "answer": print,
     }
 
@@ -27,9 +24,10 @@ def m_main():
     index = get_vector_store_index(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
     multi_hop = MultiHopRAG(index=index, num_passages=5)
     chatbot = dspy.LM(
-        model="ollama/dolphin3",
+        model="ollama/llama3.1",
         system_prompt="Strictly follow the given instructions and adhere to the given format",
         base_url="http://localhost:11434/",
+        cache=False,
         # model_type="chat"
     )
 
@@ -49,10 +47,10 @@ def m_main():
             msg = next(out)
             message_handler[msg['type']](msg['content'])
 
-        except (StopIteration, TypeError, ValueError):
+        except StopIteration:
             choice = input("History (Y/[N])? ").strip().lower()
-            if choice == 'n' or not choice: continue
-            print(chatbot.inspect_history(n=3))
+            if choice == 'y':
+                print(chatbot.inspect_history(n=3))
             _in = False
 
 if __name__ == "__main__":
