@@ -1,4 +1,5 @@
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, List
+import textwrap
 
 class NotALogger:
     
@@ -19,12 +20,26 @@ class NotALogger:
 
         handlers.get(log_type, self._print_custom(log_type))(message, self.module)
 
-    def info(self, message: str, to_file: Optional[bool] = None, *args, **kwargs):
+    def info(self, message: Union[str, List[str]], to_file: Optional[bool] = None, wrap: bool = True, *args, **kwargs):
+        if not self.enable:
+            return
+
         log_to_file = to_file if to_file is not None else self.to_file
+
+        if wrap and isinstance(message, str):
+            message = textwrap.wrap(message, 100, replace_whitespace=False, drop_whitespace=False)
+            message = [message[0]] + list(map(lambda x: '\t'+x, message[1:]))
+
         if log_to_file:
             self._log_file(message, "info")
 
-        if self.enable: self._print_info(message, self.module)
+        if isinstance(message, str):
+            self._print_info(message, self.module)
+            return
+
+        if isinstance(message, list):
+            for msg in message:
+                self._print_info(msg, self.module)
 
     def error(self, message: str, to_file: Optional[bool] = None, *args, **kwargs):
         log_to_file = to_file if to_file is not None else self.to_file
