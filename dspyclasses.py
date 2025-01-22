@@ -9,7 +9,7 @@ from typing import Union, Optional, List
 from notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
-logger.enable = False
+logger.enabled = False
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):

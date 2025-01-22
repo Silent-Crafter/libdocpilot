@@ -8,7 +8,7 @@ PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
 PG_DB_NAME = "postgres"
 
 logger = NotALogger(__name__)
-logger.enable = True
+logger.enabled = True
 
 def m_main():
     message_handler = {

@@ -12,7 +12,7 @@ from notlogging.notlogger import NotALogger
 from typing import List, Optional, Union
 
 logger = NotALogger(__name__)
-logger.enable = False
+logger.enabled = False
 
 
 def get_indexed_nodes(url: str, db: str, embedding_table: str) -> Union[List[str], None]:

@@ -11,7 +11,7 @@ from typing import List, Optional, Union, Literal
 from notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
-logger.enable = False
+logger.enabled = False
 
 class PDFPreprocessor:
 

@@ -1,16 +1,20 @@
-from typing import Literal, Optional, Union, List
 import textwrap
+from typing import Literal, Optional, Union, List
 
 class NotALogger:
+
+    modules: dict[str, 'NotALogger'] = {}
     
     def __init__(self, module: str):
-        self.enable = True
+        self._enable = True
         self.to_file = False
         self.log_file = None
         self.module = module
 
+        self.modules[self.module] = self
+
     def log(self, message: str, log_type: Union[Literal['info', 'error'], str] = "info"):
-        if not self.enable:
+        if not self._enable:
             return
 
         handlers = {
@@ -20,8 +24,19 @@ class NotALogger:
 
         handlers.get(log_type, self._print_custom(log_type))(message, self.module)
 
+    @property
+    def enabled(self):
+        return self._enable
+
+    @enabled.setter
+    def enabled(self, value: bool):
+        if not isinstance(value, bool):
+            raise TypeError("'is_enabled' must be a boolean")
+
+        self._enable = value
+
     def info(self, message: Union[str, List[str]], to_file: Optional[bool] = None, wrap: bool = True, *args, **kwargs):
-        if not self.enable:
+        if not self._enable:
             return
 
         log_to_file = to_file if to_file is not None else self.to_file
@@ -46,7 +61,7 @@ class NotALogger:
         if log_to_file:
             self._log_file(message, "info")
 
-        if self.enable: self._print_error(message, self.module)
+        if self._enable: self._print_error(message, self.module)
 
     def _log_file(self, message: Union[str, List[str]], log_type: Union[Literal['info', 'error'], str] = "info"):
         raise NotImplementedError
@@ -65,3 +80,9 @@ class NotALogger:
             print(f"\033[31m[{log_type}] {from_}: {message}\033[0m")
 
         return _print_custom
+
+    def __str__(self):
+        return str(self.enabled)
+
+    def __repr__(self):
+        return str(self.enabled)

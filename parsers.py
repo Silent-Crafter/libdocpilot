@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
-logger.enable = False
+logger.enabled = False
 
 class CustomXLSXReader(BaseReader):
     def __init__(
