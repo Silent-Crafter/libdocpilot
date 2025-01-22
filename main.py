@@ -4,8 +4,7 @@ from dspyclasses import MultiHopRAG
 from utils.llama_utils import get_vector_store_index, load_docs
 from notlogging.notlogger import NotALogger
 
-PG_CONNECTION_URI = "postgresql://postgres:postgres@localhost:5432"
-PG_DB_NAME = "postgres"
+from config import config
 
 logger = NotALogger(__name__)
 logger.enabled = True
@@ -18,16 +17,15 @@ def m_main():
         "answer": print,
     }
 
-    docs = load_docs('data', PG_CONNECTION_URI, PG_DB_NAME, "data_items")
+    docs = load_docs('data', config.get('PG_CONNECTION_URI'), config.get('embed_table'))
 
-    index = get_vector_store_index(docs, PG_CONNECTION_URI, PG_DB_NAME, "data_items", "ibm-granite/granite-embedding-278m-multilingual")
+    index = get_vector_store_index(docs, config.get('PG_CONNECTION_URI'), config.get('embed_table'), config.get('embed_model'))
     multi_hop = MultiHopRAG(index=index, num_passages=5)
     chatbot = dspy.LM(
-        model="ollama/llama3.1",
+        model="ollama/"+config.get('ollama_model'),
         system_prompt="Strictly follow the given instructions and adhere to the given format",
-        base_url="http://localhost:11434/",
+        base_url=config.get('ollama_url'),
         cache=False,
-        # model_type="chat"
     )
 
     dspy.settings.configure(lm=chatbot)
@@ -53,4 +51,5 @@ def m_main():
             _in = False
 
 if __name__ == "__main__":
-    m_main()
+    print(logger.modules)
+    # m_main()
