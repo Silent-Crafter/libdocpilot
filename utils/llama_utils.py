@@ -54,10 +54,21 @@ def load_docs(
     :param embedding_table: the table name of embeddings
     :return: List of Document
     """
+
+    input_files = kwargs.pop("input_files", [])
+
     file_extractors = {
         ".xlsx": CustomXLSXReader(),
         ".pdf": CustomPDFReader(),
     }
+
+    if input_files:
+        return SimpleDirectoryReader(
+            input_dir=doc_dir,
+            file_extractor=file_extractors,
+            input_files=input_files,
+            **kwargs
+        ).load_data()
 
     # List files only. Skip hidden files of linux system
     files = filter(
@@ -156,13 +167,14 @@ def reindex_vector_store(
 
     storage_context, _ = get_vector_storage_context(uri, embeddings_table, embed_dim=embed_dim, perform_setup=True)
 
+    logger.info(f"Embedding {len(documents)} documents...")
     return embed_documents(documents, embed_model, storage_context)
 
 
 def embed_documents(
         documents: List[Document],
         embed_model: str,
-        storage_context: StorageContext,
+        storage_context: Optional[StorageContext] = None,
         **kwargs
 ) -> VectorStoreIndex:
     """
