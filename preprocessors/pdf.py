@@ -53,7 +53,7 @@ class PDFPreprocessor:
         try:
             self.pdf = pypdf.PdfReader(os.path.join(self.artifact_path, "artifact.pdf"))
         except FileNotFoundError:
-            logger.error("Could not find artifact.pdf. Continuing with original file")
+            logger.error("Could not find artifact.pdf. Continuing with original file. This may be expected behaviour")
             self.pdf = pypdf.PdfReader(self.file)
 
         self.pages = self.pdf.pages
@@ -82,31 +82,33 @@ class PDFPreprocessor:
                 # page.delete_image(image[0])
             rects.append(r)
 
+        logger.info(f"Found {len(image_xrefs)} images")
+
         # Save images in out_path folder
         out_path = os.path.abspath(out_path)
         try:
             for xref in image_xrefs:
                 image = self.mupdf.extract_image(xref)
-                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
                 fname = f"{file_prefix}-{timestamp}-{xref}.{image['ext']}"
                 file_names.append(fname)
                 with open(os.path.join(out_path, fname), "wb") as fp:
                     fp.write(image['image'])
-        except KeyError:
-            raise RuntimeError("unable to extract image data")
+        except Exception as e:
+            raise RuntimeError(f"Error while extracting image: {e}")
 
 
         # Replace images with text
-        for page_no, page in enumerate(list(self.mupdf.pages())):
-            tw = pymupdf.TextWriter(page.rect)
-            for img_no, rect in enumerate(rects[page_no]):
-                cx = (rect.x0 + rect.x1) // 2
-                cy = (rect.y0 + rect.y1) // 2
-                tw.append((cx, cy), f" {file_names[img_no]} ")
-            tw.write_text(page)
+        ## for page_no, page in enumerate(list(self.mupdf.pages())):
+        ##     tw = pymupdf.TextWriter(page.rect)
+        ##     for img_no, rect in enumerate(rects[page_no]):
+        ##         cx = (rect.x0 + rect.x1) // 2
+        ##         cy = (rect.y0 + rect.y1) // 2
+        ##         tw.append((cx, cy), f" {file_names[img_no]} ")
+        ##     tw.write_text(page)
 
         # Save modified pdf
-        self.mupdf.ez_save(os.path.join(self.artifact_path, "artifact.pdf"))
+        # self.mupdf.ez_save(os.path.join(self.artifact_path, "artifact.pdf"))
 
 
     def deduplicate(
@@ -171,7 +173,7 @@ class PDFPreprocessor:
                 j+i+1
                 for i, s1 in enumerate(similarity_matrix)
                 for j, s2 in enumerate(s1[i+1:])
-                if s2 > 0.86
+                if s2 > 0.9
             )
 
             # Merge all the lines back into pages
@@ -187,24 +189,8 @@ class PDFPreprocessor:
 
         return new_pages
 
-
-    def forward(self):
-        try:
-            self.replace_images("out_images/")
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            logger.info("Skipping image-caption pairing")
-
-        pages = self.deduplicate()
-        pages = self.deduplicate(page_lines=pages, direction="up")
-        self.cleanup()
-        return pages
-
     def cleanup(self):
         if self.pdf: self.pdf.close()
-        self.mupdf.close()
+        if self.mupdf: self.mupdf.close()
         shutil.rmtree(self.artifact_path)
         if os.path.exists(self.artifact_path): os.rmdir(self.artifact_path)
-
-    def __call__(self, *args, **kwargs):
-        return self.forward()

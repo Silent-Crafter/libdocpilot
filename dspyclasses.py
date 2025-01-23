@@ -1,12 +1,12 @@
 import dspy
+import json
 
 from llama_index.core import VectorStoreIndex
 from signatures import GenerateSearchQuery, GenerateAnswer, ImageRag
 from dsp.utils.utils import deduplicate
+from notlogging.notlogger import NotALogger
 
 from typing import Union, Optional, List
-
-from notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
 logger.enabled = False
@@ -62,6 +62,16 @@ class LlamaIndexRMClient(dspy.Retrieve):
         )
 
 
+class ImagePlacerRag(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.image_rag = dspy.ChainOfThought(ImageRag)
+
+    def forward(self, ground_truth, question):
+        resp = self.image_rag(ground_truth=ground_truth, question=question)
+        return dspy.Prediction(response=resp.response)
+
+
 class MultiHopRAG(dspy.Module):
     def __init__(self, index: VectorStoreIndex, num_passages=3):
         super().__init__()
@@ -69,9 +79,14 @@ class MultiHopRAG(dspy.Module):
         self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
         self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
         self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
-        # self.search_images = dspy.ChainOfThought(ImageRag, temperature=0.4)
+        self.place_images = ImagePlacerRag()
+        self.place_images.load("optimized_image_rag.json")
 
         self.message_history: List[dict[str, str]] = []
+
+        self.mappings = ''
+        with open("labels/new.json") as f:
+            self.mappings = json.dumps(json.load(f))
 
         self.context = []
         self.files = []
@@ -101,9 +116,9 @@ class MultiHopRAG(dspy.Module):
 
         yield {"type": "answer", "content": prediction.answer}
 
-        # images = self.search_images(context=self.context, answer=prediction.answer)
+        resp = self.place_images(ground_truth=self.mappings, question=prediction.answer)
 
-        # yield {"type": "image", "content": images.image_ids}
+        yield {"type": "image", "content": resp.response}
 
         self.update_message_history([
             {"role": "user", "content": question},

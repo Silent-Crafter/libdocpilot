@@ -111,6 +111,8 @@ class CustomPDFReader(BaseReader):
         pages = preprocessor.deduplicate(direction="down")
         pages = preprocessor.deduplicate(page_lines=pages, direction="up")
 
+        preprocessor.cleanup()
+
         text = ""
         for page in pages:
             page = list(filter(lambda x: x.strip(), page))
