@@ -7,14 +7,14 @@ from notlogging.notlogger import NotALogger
 from config import config
 
 logger = NotALogger(__name__)
-logger.enabled = True
+logger.enabled = False
 
 def m_main():
     message_handler = {
         "query": logger.info,
         "files": logger.info,
         "image": print,
-        "answer": print,
+        "answer": logger.info,
     }
 
     docs = load_docs('data', config.get('PG_CONNECTION_URI'), config.get('embed_table'))
@@ -51,5 +51,4 @@ def m_main():
             _in = False
 
 if __name__ == "__main__":
-    print(logger.modules)
-    # m_main()
+    m_main()

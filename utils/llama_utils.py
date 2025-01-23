@@ -63,19 +63,17 @@ def load_docs(
     }
 
     if input_files:
-        return SimpleDirectoryReader(
-            input_dir=doc_dir,
-            file_extractor=file_extractors,
-            input_files=input_files,
-            **kwargs
-        ).load_data()
+        files = [input_files]
+    else:
+        # List files only. Skip hidden files of linux system
+        files = list(filter(
+            lambda f: f[0] != '.' and os.path.isfile(os.path.join(doc_dir, f)),
+            os.listdir(doc_dir)
+        ))
 
-    # List files only. Skip hidden files of linux system
-    files = filter(
-        lambda f: f[0] != '.' and os.path.isfile(os.path.join(doc_dir, f)),
-        os.listdir(doc_dir)
-    )
     indexed_nodes = get_indexed_nodes(uri, embedding_table)
+    logger.log(f"Alreaddy embedded files: {indexed_nodes}", "debug")
+    logger.log(f"Input files: {files}", "debug")
 
     # Exclude files that are already indexed and return a path of the file
     input_files = list(map(
@@ -86,6 +84,9 @@ def load_docs(
             else files
         )
     ))
+
+    if not input_files:
+        return []
 
     return SimpleDirectoryReader(
         input_dir=doc_dir,
