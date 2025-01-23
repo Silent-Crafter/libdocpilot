@@ -98,7 +98,7 @@ class MultiHopRAG(dspy.Module):
         query_resp = self.generate_query(context=context, question=question)
         query = query_resp.keywords
         # query = question
-        yield {"type": "query", "content": query}
+        yield {"type": "query", "content": query, "status": "Finding files"}
 
         logger.info(f"Query: {query}")
         nodes = self.retrieve(query)
@@ -110,15 +110,15 @@ class MultiHopRAG(dspy.Module):
         self.context = deduplicate(context + self.context)
         self.files = deduplicate(files + self.files)
 
-        yield {"type": "files", "content": self.files}
+        yield {"type": "files", "content": self.files, "status": "Generating answer"}
 
         prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
 
-        yield {"type": "answer", "content": prediction.answer}
+        yield {"type": "answer", "content": prediction.answer, "status": "Inserting images"}
 
         resp = self.place_images(ground_truth=self.mappings, question=prediction.answer)
 
-        yield {"type": "image", "content": resp.response}
+        yield {"type": "image", "content": resp.response, "status": "DONE"}
 
         self.update_message_history([
             {"role": "user", "content": question},
