@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from notlogging.notlogger import NotALogger
 
-logger = NotALogger()
-logger.enable = False
+logger = NotALogger(__name__)
+logger.enabled = False
 
 class CustomXLSXReader(BaseReader):
     def __init__(
@@ -86,6 +86,7 @@ class CustomPDFReader(BaseReader):
             self,
             file: Path,
             extra_info: Optional[Dict] = None,
+            use_artifact_pdf: bool = True,
     ) -> List[Document]:
         """Parse file."""
         if not isinstance(file, Path):
@@ -95,21 +96,30 @@ class CustomPDFReader(BaseReader):
 
         docs = []
 
-        logger.log(f"Processing {file.name}", "DEBUG")
+        logger.info(f"Processing {file.name}")
         preprocessor = PDFPreprocessor(file)
-        pages = preprocessor.forward()
 
+        if use_artifact_pdf:
+            logger.info("Extracting images")
+            try:
+                preprocessor.replace_images("out_images/")
+            except Exception as e:
+                logger.error(f"Failed to extract images: {e}")
+                logger.error("Continuing without extracting images...")
+
+        logger.info("Removing similarities...")
+        pages = preprocessor.deduplicate(direction="down")
+        pages = preprocessor.deduplicate(page_lines=pages, direction="up")
+
+        preprocessor.cleanup()
+
+        text = ""
         for page in pages:
             page = list(filter(lambda x: x.strip(), page))
-            text = "\n".join(page)
-            # Join text extracted from each page
-            docs.append(Document(text=text, metadata=metadata))
+            text += "\n".join(page)
+            text += "\n\n"
+
+        # Join text extracted from each page
+        docs.append(Document(text=text, metadata=metadata))
 
         return docs
-
-
-if __name__ == '__main__':
-    documents = CustomPDFReader().load_data(Path("data/Control Plan - 20. winding CP rev-28.pdf"))
-
-    print(len(documents))
-    print(documents[0].text)

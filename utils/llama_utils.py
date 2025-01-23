@@ -1,37 +1,50 @@
 import os
-
 import psycopg2
 
+
+from os import PathLike
 from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleDirectoryReader
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from sqlalchemy import make_url
 from parsers import CustomXLSXReader, CustomPDFReader
 from notlogging.notlogger import NotALogger
 
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
-logger = NotALogger()
-logger.enable = False
+logger = NotALogger(__name__)
+logger.enabled = False
 
 
-def get_indexed_nodes(url: str, db: str, embedding_table: str) -> Union[List[str], None]:
+def get_indexed_nodes(uri: str, embedding_table: str) -> List[str]:
+    """
+    Get a list of files/nodes that are already indexed in Vector Store
+    :param uri: PGVectorStore URI
+    :param embedding_table: table containing the embeddings
+    :return: List of indexed nodes
+    """
     result = []
     try:
-        conn = psycopg2.connect(url + '/' + db)
+        conn = psycopg2.connect(uri)
         cursor = conn.cursor()
+        # Get names of all files that are indexed
         cursor.execute(f"SELECT DISTINCT metadata_->>'file_name' FROM {embedding_table}")
         result = cursor.fetchall()
         cursor.close()
         conn.close()
     except Exception as e:
-        logger.error("Unexpected Error: ", e)
+        logger.error(f"Unexpected Error: {e}")
 
-    if result:
-        return list(map(lambda x: x[0], result))
+    return list(map(lambda x: x[0], result)) if result else []
 
 
-def load_docs(doc_dir: str, uri: str, db: str, embedding_table: str, **kwargs) -> List[Document]:
+def load_docs(
+        doc_dir: Union[PathLike[str], str],
+        uri: str,
+        embedding_table: str,
+        **kwargs
+) -> List[Document]:
     """
     Load documents from a directory using SimpleDirectoryReader of LlamaIndex
     :param doc_dir: the directory to load documents from
@@ -41,38 +54,56 @@ def load_docs(doc_dir: str, uri: str, db: str, embedding_table: str, **kwargs) -
     :param embedding_table: the table name of embeddings
     :return: List of Document
     """
+
+    input_files = kwargs.pop("input_files", [])
+
     file_extractors = {
         ".xlsx": CustomXLSXReader(),
         ".pdf": CustomPDFReader(),
     }
 
-    # Smart loading
-    files = filter(lambda f: f[0] != '.' and os.path.isfile(os.path.join(doc_dir, f)), os.listdir(doc_dir))
-    indexed_nodes = get_indexed_nodes(uri, db, embedding_table)
-
-    if indexed_nodes:
-        input_files = filter(lambda f: f not in indexed_nodes, files)
+    if input_files:
+        files = [input_files]
     else:
-        input_files = files
+        # List files only. Skip hidden files of linux system
+        files = list(filter(
+            lambda f: f[0] != '.' and os.path.isfile(os.path.join(doc_dir, f)),
+            os.listdir(doc_dir)
+        ))
 
-    input_files = list(map(lambda f: os.path.join(doc_dir, f), input_files))
+    indexed_nodes = get_indexed_nodes(uri, embedding_table)
+    logger.log(f"Alreaddy embedded files: {indexed_nodes}", "debug")
+    logger.log(f"Input files: {files}", "debug")
+
+    # Exclude files that are already indexed and return a path of the file
+    input_files = list(map(
+        lambda f: os.path.join(doc_dir, f),
+        (
+            filter(lambda f: f not in indexed_nodes, files)
+            if indexed_nodes
+            else files
+        )
+    ))
+
+    if not input_files:
+        return []
 
     return SimpleDirectoryReader(
-        doc_dir,
+        input_dir=doc_dir,
         file_extractor=file_extractors,
         input_files=input_files,
         **kwargs
     ).load_data()
 
 
-def get_total_nodes(conn, table, col="id"):
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT count({col}) FROM {table}")
-    return cursor.fetchone()[0]
-
-
-def get_index_from_store(vector_store, storage_context, embed_model, **kwargs) -> VectorStoreIndex:
+def get_index_from_store(
+        vector_store: BasePydanticVectorStore,
+        storage_context: StorageContext,
+        embed_model: str,
+        **kwargs
+) -> VectorStoreIndex:
     model_cache_folder = kwargs.get("model_cache_folder", "models/")
+
     return VectorStoreIndex.from_vector_store(
         vector_store=vector_store,
         embed_model=HuggingFaceEmbedding(
@@ -89,27 +120,24 @@ def get_index_from_store(vector_store, storage_context, embed_model, **kwargs) -
 def get_vector_store_index(
         documents: List[Document],
         uri: str,
-        db: str,
         embeddings_table: str,
         embed_model: str,
         reindex: Optional[bool] = False,
 ) -> VectorStoreIndex:
 
-    nodes = get_indexed_nodes(uri, db, embeddings_table)
-
-    # Index files that haven't already been indexed
-    # if nodes:
-    files_to_index = list(filter(lambda node: node.metadata['file_name'] not in nodes if nodes else True, documents))
-    # else:
-    #     files_to_index = documents
-
-    # Otherwise retrieve all the documents
+    # Reindex the vector store i.e. generate all embeddings again
     if reindex:
-        return reindex_vector_store(documents, uri, db, embeddings_table, embed_model)
+        return reindex_vector_store(documents, uri, embeddings_table, embed_model)
 
-    storage_context, vc = get_vector_storage_context(uri, db, embeddings_table, perform_setup=False)
-    index = get_index_from_store(vc, storage_context, embed_model)
+    nodes = get_indexed_nodes(uri, embeddings_table)
 
+    # Index/Embed files that haven't already been indexed
+    files_to_index = list(filter(lambda node: node.metadata['file_name'] not in nodes, documents))
+
+    storage_context, vs = get_vector_storage_context(uri, embeddings_table, perform_setup=False)
+    index = get_index_from_store(vs, storage_context, embed_model)
+
+    # If new files are found, generate embeddings and store in index
     if files_to_index:
         logger.log(f"Found following extra files to index: {files_to_index}", "debug")
         for file in files_to_index:
@@ -118,27 +146,38 @@ def get_vector_store_index(
     return index
 
 
-def reindex_vector_store(documents: List[Document], uri, db, embeddings_table: str, embed_model: str,
-                         embed_dim: Optional[int] = 768) -> VectorStoreIndex:
+def reindex_vector_store(
+        documents: List[Document],
+        uri: str,
+        embeddings_table: str,
+        embed_model: str,
+        embed_dim: Optional[int] = 768
+) -> VectorStoreIndex:
     conn = psycopg2.connect(uri)
     cursor = conn.cursor()
 
+    # Purge all existing embeddings
     try:
         cursor.execute('TRUNCATE TABLE {}'.format(embeddings_table))
         conn.commit()
     except psycopg2.errors.UndefinedTable:
-        pass
+        logger.error(f"Undefined table '{embeddings_table}'")
 
     cursor.close()
     conn.close()
 
-    storage_context, _ = get_vector_storage_context(uri, db, embeddings_table, embed_dim=embed_dim, perform_setup=False)
+    storage_context, _ = get_vector_storage_context(uri, embeddings_table, embed_dim=embed_dim, perform_setup=True)
 
+    logger.info(f"Embedding {len(documents)} documents...")
     return embed_documents(documents, embed_model, storage_context)
 
 
-def embed_documents(documents: List[Document], embed_model: str, storage_context: StorageContext,
-                    **kwargs) -> VectorStoreIndex:
+def embed_documents(
+        documents: List[Document],
+        embed_model: str,
+        storage_context: Optional[StorageContext] = None,
+        **kwargs
+) -> VectorStoreIndex:
     """
     Generate embeddings and store in the vector store. Will store the embeddings regardless of whether they are already present.
     :param documents: list of documents
@@ -149,6 +188,7 @@ def embed_documents(documents: List[Document], embed_model: str, storage_context
     """
     model_cache_folder = kwargs.get("model_cache_folder", "../models/")
     show_progress = kwargs.get("show_progress", True)
+    device = kwargs.get("device", "cpu")
 
     return VectorStoreIndex.from_documents(
         documents,
@@ -156,6 +196,7 @@ def embed_documents(documents: List[Document], embed_model: str, storage_context
             model_name=embed_model,
             cache_folder=model_cache_folder,
             trust_remote_code=True,
+            device=device,
         ),
         show_progress=show_progress,
         storage_context=storage_context,
@@ -163,7 +204,7 @@ def embed_documents(documents: List[Document], embed_model: str, storage_context
     )
 
 
-def get_vector_storage_context(uri, db, table, **kwargs) -> (StorageContext, PGVectorStore):
+def get_vector_storage_context(uri: str, table: str, **kwargs) -> Tuple[StorageContext, PGVectorStore]:
     """
     Create a vector store to store embeddings from a URI and a database and table
     :param uri: Postgres URI
@@ -182,7 +223,7 @@ def get_vector_storage_context(uri, db, table, **kwargs) -> (StorageContext, PGV
 
     url = make_url(uri)
     vector_store = PGVectorStore.from_params(
-        database=db,
+        database=url.database,
         host=url.host,
         password=url.password,
         port=url.port,
