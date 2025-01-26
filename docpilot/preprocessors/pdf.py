@@ -5,10 +5,10 @@ import pypdf
 import pymupdf
 
 from datetime import datetime
-from utils.embed_utils import get_embedder, compute_similarity_matrix
+from docpilot.utils.embed_utils import get_embedder, compute_similarity_matrix
 from typing import List, Optional, Union, Literal
 
-from notlogging.notlogger import NotALogger
+from docpilot.notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
 logger.enabled = False

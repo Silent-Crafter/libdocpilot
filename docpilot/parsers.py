@@ -4,11 +4,11 @@ import openpyxl
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
 from pathlib import Path
-from preprocessors.pdf import PDFPreprocessor
+from docpilot.preprocessors.pdf import PDFPreprocessor
 
 from typing import Any, Dict, List, Optional
 
-from notlogging.notlogger import NotALogger
+from docpilot.notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
 logger.enabled = False
