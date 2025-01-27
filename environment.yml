@@ -1,4 +1,4 @@
-name: ai
+name: docpilot
 channels:
   - conda-forge
 dependencies:
