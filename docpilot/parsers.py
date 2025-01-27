@@ -81,6 +81,7 @@ class CustomPDFReader(BaseReader):
         Initialize PDFReader.
         """
         self.return_full_document = return_full_document
+        self.preprocessor = PDFPreprocessor()
 
     def load_data(
             self,
@@ -97,21 +98,22 @@ class CustomPDFReader(BaseReader):
         docs = []
 
         logger.info(f"Processing {file.name}")
-        preprocessor = PDFPreprocessor(file)
+
+        self.preprocessor.open(file)
 
         if use_artifact_pdf:
             logger.info("Extracting images")
             try:
-                preprocessor.replace_images("out_images/")
+                self.preprocessor.replace_images("out_images/")
             except Exception as e:
                 logger.error(f"Failed to extract images: {e}")
                 logger.error("Continuing without extracting images...")
 
         logger.info("Removing similarities...")
-        pages = preprocessor.deduplicate(direction="down")
-        pages = preprocessor.deduplicate(page_lines=pages, direction="up")
+        pages = self.preprocessor.deduplicate(direction="down")
+        pages = self.preprocessor.deduplicate(page_lines=pages, direction="up")
 
-        preprocessor.cleanup()
+        self.preprocessor.close()
 
         text = ""
         for page in pages:
