@@ -8,8 +8,8 @@ from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from sqlalchemy import make_url
-from parsers import CustomXLSXReader, CustomPDFReader
-from notlogging.notlogger import NotALogger
+from docpilot.parsers import CustomXLSXReader, CustomPDFReader
+from docpilot.notlogging.notlogger import NotALogger
 
 from typing import List, Optional, Union, Tuple
 

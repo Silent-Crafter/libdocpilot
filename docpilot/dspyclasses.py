@@ -1,10 +1,9 @@
 import dspy
-import json
 
 from llama_index.core import VectorStoreIndex
-from signatures import GenerateSearchQuery, GenerateAnswer, ImageRag
+from docpilot.signatures import GenerateSearchQuery, GenerateAnswer, ImageRag
 from dsp.utils.utils import deduplicate
-from notlogging.notlogger import NotALogger
+from docpilot.notlogging.notlogger import NotALogger
 
 from typing import Union, Optional, List
 
@@ -73,25 +72,24 @@ class ImagePlacerRag(dspy.Module):
 
 
 class MultiHopRAG(dspy.Module):
-    def __init__(self, index: VectorStoreIndex, num_passages=3):
+    def __init__(self, index: VectorStoreIndex, num_passages=3, optimized_rag: Optional[str] = None, place_images: bool = True):
         super().__init__()
 
         self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
         self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
         self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
-        self.place_images = ImagePlacerRag()
-        self.place_images.load("optimized_image_rag.json")
+        if place_images:
+            self.place_images = ImagePlacerRag()
+            if optimized_rag: self.place_images.load(optimized_rag)
+        else:
+            self.place_images = None
 
         self.message_history: List[dict[str, str]] = []
-
-        self.mappings = ''
-        with open("labels/new.json") as f:
-            self.mappings = json.dumps(json.load(f))
 
         self.context = []
         self.files = []
 
-    def forward(self, question):
+    def forward(self, question, mapping):
         context = []
         files = []
 
@@ -116,9 +114,9 @@ class MultiHopRAG(dspy.Module):
 
         yield {"type": "answer", "content": prediction.answer, "status": "Inserting images"}
 
-        resp = self.place_images(ground_truth=self.mappings, question=prediction.answer)
-
-        yield {"type": "image", "content": resp.response, "status": "DONE"}
+        if self.place_images:
+            resp = self.place_images(ground_truth=mapping, question=prediction.answer)
+            yield {"type": "image", "content": resp.response, "status": "DONE"}
 
         self.update_message_history([
             {"role": "user", "content": question},
@@ -142,5 +140,8 @@ class MultiHopRAG(dspy.Module):
 
         return messages
 
-    def __call__(self, *args, **kwargs):
-        raise NotImplementedError("Call forward() method directly.")
+
+def configure_llm(model: str, base_url: str, cache: bool, **kwargs):
+    lm = dspy.LM(model="ollama/"+model, base_url=base_url, cache=cache, **kwargs)
+    dspy.settings.configure(lm=lm)
+    return lm

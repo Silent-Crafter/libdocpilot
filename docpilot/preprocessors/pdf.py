@@ -2,33 +2,30 @@ import shutil
 import torch
 import os
 import pypdf
+
 import pymupdf
 
 from datetime import datetime
-from utils.embed_utils import get_embedder, compute_similarity_matrix
+from docpilot.utils.embed_utils import get_embedder, compute_similarity_matrix
 from typing import List, Optional, Union, Literal
 
-from notlogging.notlogger import NotALogger
+from docpilot.notlogging.notlogger import NotALogger
 
 logger = NotALogger(__name__)
 logger.enabled = False
 
 class PDFPreprocessor:
 
-    def __init__(self, file: Union[str, os.PathLike[str]]) -> None:
-        if not isinstance(file, (str, os.PathLike)):
+    def __init__(self, file: Optional[Union[str, os.PathLike[str]]] = None) -> None:
+        if file and not isinstance(file, (str, os.PathLike)):
             raise TypeError(f"Expected str, os.PathLike got {type(file).__name__}")
 
         self.file = file
         self.pdf = None
         self.pages: List[pypdf.PageObject] = []
 
-        self.mupdf = pymupdf.open(file)
-
-        self.artifact_loc = ".preprocessor-artifacts"
-        self.artifact_path = os.path.join(os.getcwd(), self.artifact_loc)
-        if not os.path.exists(self.artifact_path):
-            os.mkdir(self.artifact_path)
+        self.mupdf = pymupdf.open(file) if file else None
+        _, self.embed = get_embedder("hf/ibm-granite/granite-embedding-278m-multilingual")
 
     def _pages_into_lines(self, strip_rotated: Optional[bool] = False) -> List[List[str]]:
         if not self.pdf.pages:
@@ -48,15 +45,6 @@ class PDFPreprocessor:
             lines.append(text.splitlines())
 
         return lines
-
-    def _use_deimaged_pdf(self):
-        try:
-            self.pdf = pypdf.PdfReader(os.path.join(self.artifact_path, "artifact.pdf"))
-        except FileNotFoundError:
-            logger.error("Could not find artifact.pdf. Continuing with original file. This may be expected behaviour")
-            self.pdf = pypdf.PdfReader(self.file)
-
-        self.pages = self.pdf.pages
 
     def replace_images(
         self,
@@ -84,6 +72,8 @@ class PDFPreprocessor:
 
         logger.info(f"Found {len(image_xrefs)} images")
 
+        # TODO: USE PYPDF FOR EXTRACTING IMAGES
+        #       DROP PYMUPDF DEPENDENCY
         # Save images in out_path folder
         out_path = os.path.abspath(out_path)
         try:
@@ -98,19 +88,6 @@ class PDFPreprocessor:
             raise RuntimeError(f"Error while extracting image: {e}")
 
 
-        # Replace images with text
-        ## for page_no, page in enumerate(list(self.mupdf.pages())):
-        ##     tw = pymupdf.TextWriter(page.rect)
-        ##     for img_no, rect in enumerate(rects[page_no]):
-        ##         cx = (rect.x0 + rect.x1) // 2
-        ##         cy = (rect.y0 + rect.y1) // 2
-        ##         tw.append((cx, cy), f" {file_names[img_no]} ")
-        ##     tw.write_text(page)
-
-        # Save modified pdf
-        # self.mupdf.ez_save(os.path.join(self.artifact_path, "artifact.pdf"))
-
-
     def deduplicate(
             self,
             page_lines: Optional[List[List[str]]] = None,
@@ -123,10 +100,7 @@ class PDFPreprocessor:
         if direction not in ["up", "down"]:
             raise ValueError("direction must be 'up' or 'down'")
 
-        self._use_deimaged_pdf()
         lines = self._pages_into_lines(strip_rotated=True) if not page_lines else page_lines
-
-        _, embed = get_embedder("hf/ibm-granite/granite-embedding-278m-multilingual")
 
         # Remove blank lines if any
         lines = [
@@ -163,7 +137,7 @@ class PDFPreprocessor:
                 lines_.append(line)
 
             # Compute embedding of each line
-            embeddings.extend([embed(line) for line in lines_])
+            embeddings.extend([self.embed(line) for line in lines_])
 
             # Compute a matrix which contains computed similarity of any two given lines
             similarity_matrix = compute_similarity_matrix(no_of_pages, no_of_pages, embeddings)
@@ -189,8 +163,16 @@ class PDFPreprocessor:
 
         return new_pages
 
-    def cleanup(self):
-        if self.pdf: self.pdf.close()
-        if self.mupdf: self.mupdf.close()
-        shutil.rmtree(self.artifact_path)
-        if os.path.exists(self.artifact_path): os.rmdir(self.artifact_path)
+    def open(self, file: Union[str, os.PathLike[str]]):
+        self.file = file
+        self.mupdf = pymupdf.open(file)
+        self.pdf = pypdf.PdfReader(self.file)
+        self.pages = self.pdf.pages
+
+    def close(self):
+        self.file = None
+        if not self.mupdf.is_closed: self.mupdf.close()
+        if self.pdf: 
+            self.pdf.close()
+            self.pages = []
+
