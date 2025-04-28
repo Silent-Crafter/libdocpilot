@@ -1,9 +1,10 @@
 import dspy
 
 from llama_index.core import VectorStoreIndex
-from docpilot.signatures import GenerateSearchQuery, GenerateAnswer, ImageRag
+from docpilot.signatures import GenerateSearchQuery, GenerateAnswer
 from dsp.utils.utils import deduplicate
 from docpilot.notlogging.notlogger import NotALogger
+from docpilot.utils.image_utils import image_to_b64
 
 from typing import Union, Optional, List
 
@@ -61,35 +62,54 @@ class LlamaIndexRMClient(dspy.Retrieve):
         )
 
 
-class ImagePlacerRag(dspy.Module):
-    def __init__(self):
+class ImageRetriever(dspy.Retrieve):
+    def __init__(self, image_index: VectorStoreIndex):
         super().__init__()
-        self.image_rag = dspy.ChainOfThought(ImageRag)
+        self.retriever = image_index.as_retriever()
 
-    def forward(self, ground_truth, question):
-        resp = self.image_rag(ground_truth=ground_truth, question=question)
-        return dspy.Prediction(response=resp.response)
+    def forward(
+            self,
+            query: str = None,
+            k: Optional[int] = None,
+            **kwargs
+    ) -> Union[str, None]:
+        nodes = self.retriever.retrieve(query)
+
+        good_nodes = list(filter(
+            lambda node: node.score >= 0.69,
+            nodes
+        ))
+
+        b64_images = list(map(
+            lambda node: node.metadata["file_name"],
+            good_nodes
+        ))
+
+        logger.info(f"Nodes: {nodes}")
+        logger.info(f"Images: {b64_images}")
+
+        if b64_images:
+            return b64_images[0]
+
+        return None
 
 
 class MultiHopRAG(dspy.Module):
-    def __init__(self, index: VectorStoreIndex, num_passages=3, optimized_rag: Optional[str] = None, place_images: bool = True):
+    def __init__(self, index: VectorStoreIndex, image_index: VectorStoreIndex, num_passages=3):
         super().__init__()
 
         self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
         self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
         self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
-        if place_images:
-            self.place_images = ImagePlacerRag()
-            if optimized_rag: self.place_images.load(optimized_rag)
-        else:
-            self.place_images = None
+
+        self.image_retriever = ImageRetriever(image_index)
 
         self.message_history: List[dict[str, str]] = []
 
         self.context = []
         self.files = []
 
-    def forward(self, question, mapping):
+    def forward(self, question):
         context = []
         files = []
 
@@ -111,16 +131,27 @@ class MultiHopRAG(dspy.Module):
         yield {"type": "files", "content": self.files, "status": "Generating answer"}
 
         prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
+        resp = prediction.answer
 
-        yield {"type": "answer", "content": prediction.answer, "status": "Inserting images"}
+        yield {"type": "answer", "content": resp, "status": "Inserting images"}
 
-        if self.place_images:
-            resp = self.place_images(ground_truth=mapping, question=prediction.answer)
-            yield {"type": "image", "content": resp.response, "status": "DONE"}
+        imaged_lines = []
+        for line in resp.splitlines():
+            image = self.image_retriever(line)
+            print("Checking:", line)
+            print("Image:", image)
+            if image:
+                line = f"<img src=\"data:image/jpeg;base64,{image_to_b64(image)}\">\n" + line
+
+            imaged_lines.append(line)
+
+        final_resp = "\n".join(imaged_lines)
+
+        yield {"type": "answer_with_images", "content": final_resp, "status": "DONE"}
 
         self.update_message_history([
             {"role": "user", "content": question},
-            {"role": "assistant", "content": prediction.answer},
+            {"role": "assistant", "content": resp},
         ])
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
