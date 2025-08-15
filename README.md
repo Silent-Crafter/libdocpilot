@@ -7,7 +7,9 @@ check `example.py` for example usage
 ## INSTALLATION
 
 ```shell
-pip3 install 'git+ssh://git@github.com/Silent-Crafter/libdocpilot'
+git clone 'https://github.com/Silent-Crafter/libdocpilot'
+cd libdocpilot
+pip3 install .
 ```
 
 ## USAGE
