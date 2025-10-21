@@ -59,6 +59,7 @@ def m_main():
     _in = False
     prompt = ''
     out = None
+
     while True:
         if not _in:
             prompt = input(">> ").strip()
