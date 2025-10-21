@@ -33,7 +33,7 @@ def m_main():
     _in = False
     prompt = ''
     out = None
-    with open("/home/silentcrafter/Documents/INTERNSHIP/docpilot-api/labels/new.json") as f:
+    with open("./labels/new.json") as f:
         mapping = f.read()
     while True:
         if not _in:
