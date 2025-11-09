@@ -13,8 +13,7 @@ logger.enabled = True
 
 def to_html_file(data: str):
     with open("example.html", "w", encoding="utf-8") as f:
-        data = """
-        <html>
+        data = """ <html>
         <head>
         <style>
         img { display: block; width: 200px; }
@@ -59,9 +58,6 @@ def m_main():
     _in = False
     prompt = ''
     out = None
-
-    with open("./labels/new.json") as f:
-        mapping = f.read()
 
     while True:
         if not _in:
