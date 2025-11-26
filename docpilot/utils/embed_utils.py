@@ -6,8 +6,9 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 
 from typing import List, Callable, Optional, Tuple
 
+from config import Config
 
-def get_embedder(model_name: str, **kwargs) -> Tuple[BaseEmbedding, Callable[[str], torch.Tensor]]:
+def get_embedder(model_name: str = None, **kwargs) -> Tuple[BaseEmbedding, Callable[[str], torch.Tensor]]:
     """
     Returns an embedder provider of llama_index and a callable that takes a string as an argument to embed the string.
     :param model_name: name of the embed model
@@ -18,6 +19,13 @@ def get_embedder(model_name: str, **kwargs) -> Tuple[BaseEmbedding, Callable[[st
         "ollama": OllamaEmbedding,
         "hf": HuggingFaceEmbedding,
     }
+
+    if model_name is None:
+        config=Config()
+        model_name=config.embed_model
+    
+    if not model_name.startswith('hf/'):
+        model_name = f"hf/{model_name}"
 
     provider, *model = model_name.split("/")
     model = "/".join(model)
