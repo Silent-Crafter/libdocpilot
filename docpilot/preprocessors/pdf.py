@@ -25,7 +25,7 @@ class PDFPreprocessor:
         self.pages: List[pypdf.PageObject] = []
 
         self.mupdf = pymupdf.open(file) if file else None
-        _, self.embed = get_embedder("hf/ibm-granite/granite-embedding-278m-multilingual")
+        _, self.embed = get_embedder()
 
     def _pages_into_lines(self, strip_rotated: Optional[bool] = False) -> List[List[str]]:
         if not self.pdf.pages:
