@@ -24,7 +24,7 @@ def get_embedder(model_name: str = None, **kwargs) -> Tuple[BaseEmbedding, Calla
         config=Config()
         model_name=config.embed_model
     
-    if not model_name.startswith('hf/'):
+    if not model_name.startswith('hf/') and not model_name.startswith('ollama/'):
         model_name = f"hf/{model_name}"
 
     provider, *model = model_name.split("/")
