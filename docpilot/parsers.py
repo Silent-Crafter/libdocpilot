@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from docpilot.notlogging.notlogger import NotALogger
 
+import pprint
+
 logger = NotALogger(__name__)
 logger.enabled = False
 
@@ -81,7 +83,7 @@ class CustomPDFReader(BaseReader):
         Initialize PDFReader.
         """
         self.return_full_document = return_full_document
-        self.preprocessor = PDFPreprocessor()
+        self.preprocessor = None
 
     def load_data(
             self,
@@ -93,35 +95,76 @@ class CustomPDFReader(BaseReader):
         if not isinstance(file, Path):
             file = Path(file)
 
-        metadata = {"file_name": file.name, "create_date": file.stat().st_ctime_ns}
+        self.preprocessor=PDFPreprocessor(str(file))
+        raw_elements=self.preprocessor.get_elements()
+        self.preprocessor.close()
 
-        docs = []
+        documents=[]
 
         logger.info(f"Processing {file.name}")
 
-        self.preprocessor.open(file)
+        text_buffer=""
+        buffer_page_start=1
+        current_page=1
 
-        if use_artifact_pdf:
-            logger.info("Extracting images")
-            try:
-                self.preprocessor.replace_images("out_images/")
-            except Exception as e:
-                logger.error(f"Failed to extract images: {e}")
-                logger.error("Continuing without extracting images...")
+        base_metadata={
+            "file_name":file.name,
+            "create_date": file.stat().st_ctime_ns
+        }
 
-        logger.info("Removing similarities...")
-        pages = self.preprocessor.deduplicate(direction="down")
-        pages = self.preprocessor.deduplicate(page_lines=pages, direction="up")
+        def flush_buffer():
+            nonlocal text_buffer, buffer_page_start
 
-        self.preprocessor.close()
+            if text_buffer.strip():
+                doc=Document(
+                    text=text_buffer.strip(),
+                    metadata={
+                        **base_metadata,
+                        "type":"text"
+                    }
+                )
+                documents.append(doc)
+            text_buffer=""
+        
+        for item in raw_elements:
+            if item["page"]>current_page:
+                current_page=item["page"]
+                text_buffer+=f"\n\n[PAGE {current_page}]\n\n"
+            
+            if item["type"]=="text":
+                text_buffer+=item["content"] +"\n\n"
+            
+            elif item["type"]=="image":
+                text_buffer+=f"\n[IMAGE REF: {item['content']}]\n"
+                documents.append(Document(
+                    text=item['content'],
+                    metadata={
+                        **base_metadata,
+                        "page_number": item["page"],
+                        "type":"image",
+                        "image_path":item["image_path"],
+                        "bbox": item["bbox"]
+                    }
+                ))
+            
+            elif item["type"]=="table":
+                text_buffer+=f"\n[TABLE REF: {item['content']}]\n"
+                documents.append(Document(
+                    text=item['content'],
+                    metadata={
+                        **base_metadata,
+                        "page_number": item["page"],
+                        "type":"table",
+                        "table_html":item["table_html"],
+                        "bbox": item["bbox"]
+                    }
+                ))
 
-        text = ""
-        for page in pages:
-            page = list(filter(lambda x: x.strip(), page))
-            text += "\n".join(page)
-            text += "\n\n"
+        flush_buffer()
 
-        # Join text extracted from each page
-        docs.append(Document(text=text, metadata=metadata))
-
-        return docs
+        return documents
+    
+if __name__=="__main__":
+    pdfReader=CustomPDFReader()
+    docs=pdfReader.load_data("test_data/Attention.pdf")
+    pprint.pprint(docs[0])

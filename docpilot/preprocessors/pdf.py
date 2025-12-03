@@ -56,7 +56,8 @@ class PDFPreprocessor:
 
                 page_tables.append({
                     "type":"table",
-                    "content":html_text,
+                    "content":"<Table here: Table's VLM generated description>",
+                    "table_html":html_text,
                     "bbox":tab.bbox,
                     "page":page_num+1,
                     "processed":False
@@ -85,7 +86,7 @@ class PDFPreprocessor:
                     img_bytes=block["image"]
                     ext=block["ext"]
                     img_hash=hashlib.sha256(img_bytes).hexdigest()
-                    img_path=f"{self.img_dir}/{img_hash}.{ext}"
+                    img_path=f"{self.img_dir}{img_hash}.{ext}"
 
                     if not os.path.exists(img_path):
                         with open(img_path, "wb") as f:
@@ -125,6 +126,6 @@ class PDFPreprocessor:
         self.doc.close()
 
 if __name__=="__main__":
-    pdfpre=PDFPreprocessor("../../test_data/Attention.pdf")
+    pdfpre=PDFPreprocessor("test_data/Attention.pdf")
     returned_list=pdfpre.get_elements()
-    pprint.pprint([i for i in returned_list if i["page"] in [9]])
+    pprint.pprint([i for i in returned_list if i["page"] in [3]])
