@@ -1,178 +1,131 @@
-import shutil
-import torch
 import os
-import pypdf
+import fitz
+import hashlib
+from typing import List, Optional, Union, Literal, Dict, Tuple
+import pprint
 
-import pymupdf
+# from docpilot.notlogging.notlogger import NotALogger
 
-from datetime import datetime
-from docpilot.utils.embed_utils import get_embedder, compute_similarity_matrix
-from typing import List, Optional, Union, Literal
-
-from docpilot.notlogging.notlogger import NotALogger
-
-logger = NotALogger(__name__)
-logger.enabled = False
+# logger = NotALogger(__name__)
+# logger.enabled = False
 
 class PDFPreprocessor:
 
-    def __init__(self, file: Optional[Union[str, os.PathLike[str]]] = None) -> None:
-        if file and not isinstance(file, (str, os.PathLike)):
-            raise TypeError(f"Expected str, os.PathLike got {type(file).__name__}")
+    def __init__(self, file_path: Optional[Union[str, os.PathLike[str]]]) -> None:
+        if not isinstance(file_path, (str, os.PathLike)):
+            raise TypeError(f"Expected str, os.PathLike got {type(file_path).__name__}")
 
-        self.file = file
-        self.pdf = None
-        self.pages: List[pypdf.PageObject] = []
+        self.file_path=file_path
+        self.doc=fitz.open(file_path)
+        self.img_dir="out_images/"
+        os.makedirs(self.img_dir, exist_ok=True)
 
-        self.mupdf = pymupdf.open(file) if file else None
-        _, self.embed = get_embedder("hf/ibm-granite/granite-embedding-278m-multilingual")
+    def _get_overlap_ratio(self, bbox1: Tuple[float, float, float, float], bbox2: Tuple[float, float, float, float]) -> float:
+        x0=max(bbox1[0], bbox2[0])
+        y0=max(bbox1[1], bbox2[1])
+        x1=min(bbox1[2], bbox2[2])
+        y1=min(bbox1[3], bbox2[3])
 
-    def _pages_into_lines(self, strip_rotated: Optional[bool] = False) -> List[List[str]]:
-        if not self.pdf.pages:
-            raise RuntimeError("No pages found")
+        if(x0>=x1 or y0>=y1):
+            return 0.0
+        
+        inter_area=(x1 - x0) * (y1 - y0)
+        bbox1_area=(bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
 
-        if not self.pages:
-            self.pages = self.pdf.pages
+        if(bbox1_area==0):
+            return 0.0
+        
+        return inter_area/bbox1_area
 
-        lines: List[List[str]] = []
-        for page in self.pages:
-            text = page.extract_text(
-                extraction_mode='layout',
-                layout_mode_strip_rotated=strip_rotated,
-                layout_mode_space_vertically=False,
-            )
+    def get_elements(self) -> List[Dict]:
+        all_elements=[]
 
-            lines.append(text.splitlines())
+        for page_num,page in enumerate(self.doc):
+            #first finding tables
+            tables=page.find_tables()
+            table_bboxes=[fitz.Rect(tab.bbox) for tab in tables]
 
-        return lines
+            page_tables=[]    
 
-    def replace_images(
-        self,
-        out_path: Optional[Union[str, os.PathLike[str]]] = None,
-        prefix: Optional[str] = None,
-    ):
-        if not isinstance(out_path, (str, os.PathLike)):
-            raise TypeError(f"Expected str, os.PathLike, got {type(out_path).__name__}")
+            for i, tab in enumerate(tables):
+                df=tab.to_pandas()
+                if df.empty: 
+                    continue
 
-        txt_prefix = prefix if prefix else "img"
-        file_prefix = txt_prefix
+                html_text=df.to_html(index=False)
 
-        # Extract images with their bounding boxes
-        image_xrefs = []
-        rects = []
-        file_names = []
-        for page in self.mupdf.pages():
-            r = []
-            for image in page.get_images():
-                image_xrefs.append(image[0])
-                r.append(page.get_image_bbox(image[7]))
-                # Delete image from pdf
-                # page.delete_image(image[0])
-            rects.append(r)
+                page_tables.append({
+                    "type":"table",
+                    "content":"<Table here: Table's VLM generated description>",
+                    "table_html":html_text,
+                    "bbox":tab.bbox,
+                    "page":page_num+1,
+                    "processed":False
+                })
+            
+            #now images + text and ignoring blocks inside table
+            page_dict=page.get_text("dict")
+            blocks=page_dict["blocks"]
 
-        logger.info(f"Found {len(image_xrefs)} images")
+            for block in blocks:
+                block_rect=block["bbox"]
+                is_inside_table=False
+                for tab_obj in page_tables:
+                    if self._get_overlap_ratio(block_rect,tab_obj["bbox"])>0.6:
+                        is_inside_table=True
 
-        # TODO: USE PYPDF FOR EXTRACTING IMAGES
-        #       DROP PYMUPDF DEPENDENCY
-        # Save images in out_path folder
-        out_path = os.path.abspath(out_path)
-        try:
-            for xref in image_xrefs:
-                image = self.mupdf.extract_image(xref)
-                timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-                fname = f"{file_prefix}-{timestamp}-{xref}.{image['ext']}"
-                file_names.append(fname)
-                with open(os.path.join(out_path, fname), "wb") as fp:
-                    fp.write(image['image'])
-        except Exception as e:
-            raise RuntimeError(f"Error while extracting image: {e}")
+                        if not tab_obj["processed"]:
+                            all_elements.append(tab_obj)
+                            tab_obj["processed"]=True
+                        break
 
+                if is_inside_table:
+                    continue
+                
+                if(block["type"]==1):
+                    img_bytes=block["image"]
+                    ext=block["ext"]
+                    img_hash=hashlib.sha256(img_bytes).hexdigest()
+                    img_path=f"{self.img_dir}{img_hash}.{ext}"
 
-    def deduplicate(
-            self,
-            page_lines: Optional[List[List[str]]] = None,
-            direction: Optional[Literal["up", "down"]] = "down"
-    ) -> List[List[str]]:
-        """
-        greedy approach to deduplicate headers and footers
-        :return:
-        """
-        if direction not in ["up", "down"]:
-            raise ValueError("direction must be 'up' or 'down'")
+                    if not os.path.exists(img_path):
+                        with open(img_path, "wb") as f:
+                            f.write(img_bytes)
+                    
+                    all_elements.append({
+                        "type":"image",
+                        "content":"<Image here: VLM generated description>",
+                        "image_path":img_path,
+                        "bbox":block["bbox"],
+                        "page":page_num+1
+                    })
 
-        lines = self._pages_into_lines(strip_rotated=True) if not page_lines else page_lines
+                elif(block["type"]==0):
+                    text=""
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            text+=span["text"]+" "
+                    
+                    if(len(text.strip())<3):
+                        continue
+                        
+                    all_elements.append({
+                        "type":"text",
+                        "content":text.strip(),
+                        "bbox":block["bbox"],
+                        "page":page_num + 1
+                    })
 
-        # Remove blank lines if any
-        lines = [
-            [line for line in page if line.strip()] for page in lines
-        ]
+            for tab_obj in page_tables:
+                if not tab_obj["processed"]:
+                    all_elements.append(tab_obj)
 
-        no_of_pages = len(lines)
-        new_pages: List[List[str]] = [
-            [] for _ in range(no_of_pages)
-        ]
-
-        # no. of lines on every page
-        lens = list(map(len, lines))
-        max_len = max(lens)
-
-        def condition(cnt: int) -> bool:
-            return cnt < max_len if direction == "down" else abs(cnt) <= max_len
-
-        counter = 0 if direction == "down" else -1
-
-        while condition(counter):
-            embeddings: List[torch.Tensor] = []
-            lines_ = []
-
-            # Compute embedding of nth line of every page
-            for i in range(no_of_pages):
-                if counter < lens[i] and direction == "down":
-                    line = lines[i][counter]
-                elif abs(counter) <= lens[i] and direction == "up":
-                    line = lines[i][counter+lens[i]]
-                else:
-                    line = ''
-
-                lines_.append(line)
-
-            # Compute embedding of each line
-            embeddings.extend([self.embed(line) for line in lines_])
-
-            # Compute a matrix which contains computed similarity of any two given lines
-            similarity_matrix = compute_similarity_matrix(no_of_pages, no_of_pages, embeddings)
-
-            # Remove similar lines and store the results page by page
-            discard_index = set(
-                j+i+1
-                for i, s1 in enumerate(similarity_matrix)
-                for j, s2 in enumerate(s1[i+1:])
-                if s2 > 0.9
-            )
-
-            # Merge all the lines back into pages
-            for i in range(no_of_pages):
-                if i in discard_index: continue
-
-                if direction == "up":
-                    new_pages[i].insert(0,lines_[i])
-                else:
-                    new_pages[i].append(lines_[i])
-
-            counter = counter + (1 if direction == "down" else -1)
-
-        return new_pages
-
-    def open(self, file: Union[str, os.PathLike[str]]):
-        self.file = file
-        self.mupdf = pymupdf.open(file)
-        self.pdf = pypdf.PdfReader(self.file)
-        self.pages = self.pdf.pages
+        return all_elements
 
     def close(self):
-        self.file = None
-        if not self.mupdf.is_closed: self.mupdf.close()
-        if self.pdf: 
-            self.pdf.close()
-            self.pages = []
+        self.doc.close()
 
+if __name__=="__main__":
+    pdfpre=PDFPreprocessor("test_data/Attention.pdf")
+    returned_list=pdfpre.get_elements()
+    pprint.pprint([i for i in returned_list if i["page"] in [3]])
