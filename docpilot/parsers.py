@@ -167,4 +167,4 @@ class CustomPDFReader(BaseReader):
 if __name__=="__main__":
     pdfReader=CustomPDFReader()
     docs=pdfReader.load_data("test_data/Attention.pdf")
-    pprint.pprint(docs[0])
+    pprint.pprint(docs[-1].text)
