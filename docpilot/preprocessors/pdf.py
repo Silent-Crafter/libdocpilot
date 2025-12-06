@@ -128,4 +128,4 @@ class PDFPreprocessor:
 if __name__=="__main__":
     pdfpre=PDFPreprocessor("test_data/Attention.pdf")
     returned_list=pdfpre.get_elements()
-    pprint.pprint([i for i in returned_list if i["page"] in [3]])
+    pprint.pprint([i for i in returned_list if i["page"] in [8,9]])
