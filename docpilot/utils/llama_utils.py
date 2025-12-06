@@ -210,13 +210,7 @@ def embed_documents(
     nodes=splitter.get_nodes_from_documents(documents)
     logger.info(f"Generated {len(nodes)} semantic nodes.")
 
-    return VectorStoreIndex.from_documents(
-        nodes,
-        embed_model=embed_model_instance,
-        show_progress=show_progress,
-        storage_context=storage_context,
-        **kwargs,
-    )
+    return VectorStoreIndex(nodes)
 
 
 def get_vector_storage_context(uri: str, table: str, **kwargs) -> Tuple[StorageContext, PGVectorStore]:
