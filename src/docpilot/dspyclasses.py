@@ -1,12 +1,14 @@
 import dspy
+import asyncio
 
 from llama_index.core import VectorStoreIndex
+from llama_index.core.prompts import MessageRole
 from docpilot.signatures import GenerateSearchQuery, GenerateAnswer
-from dsp.utils.utils import deduplicate
+from dspy.dsp.utils.utils import deduplicate
 from docpilot.notlogging.notlogger import NotALogger
 from docpilot.utils.image_utils import image_to_b64
 
-from typing import Union, Optional, List
+from typing import AsyncGenerator, Union, Optional, List
 
 logger = NotALogger(__name__)
 logger.enabled = False
@@ -109,11 +111,15 @@ class MultiHopRAG(dspy.Module):
         self.context = []
         self.files = []
 
-    def forward(self, question):
+    def forward(self, question, stream: bool = False):
+        __first = True
         context = []
         files = []
 
-        query_resp = self.generate_query(context=context, question=question)
+        def serialize_message_history(history: list[dict[str, str]]):
+            return '\n'.join(map(lambda d: f"{d['role']}: {d['content']}", history))
+
+        query_resp = self.generate_query(past_context=serialize_message_history(self.message_history), question=question)
         query = query_resp.keywords
         # query = question
         yield {"type": "query", "content": query, "status": "Finding files"}
@@ -130,20 +136,67 @@ class MultiHopRAG(dspy.Module):
 
         yield {"type": "files", "content": self.files, "status": "Generating answer"}
 
-        prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
-        resp = prediction.answer
+        if stream:
+            streamed_generate_answer = dspy.streamify(
+                self.generate_answer,
+                stream_listeners=[dspy.streaming.StreamListener(signature_field_name="answer")],
+            )
 
-        yield {"type": "answer", "content": resp, "status": "Inserting images"}
+            accumulated = ""
+
+            resp_generator: AsyncGenerator = streamed_generate_answer(context=self.context, question=question, messages=self.format_history())
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            while True:
+                try:
+                    chunk = loop.run_until_complete(resp_generator.__anext__())
+                    if isinstance(chunk, dspy.Prediction):
+                        accumulated = chunk.answer
+                        yield {
+                            "type": "answer",
+                            "content": accumulated,
+                            "status": "Inserting images"
+                        }
+                        break
+
+                    token = chunk.chunk  # streamed partial text
+                    accumulated += token
+
+                    yield {
+                        "type": "answer",
+                        "content": accumulated,
+                        "status": "Streaming"
+                    }
+                except StopAsyncIteration:
+                    break
+
+            resp = accumulated
+            loop.close()
+
+        else:
+            prediction = self.generate_answer(
+                context=self.context,
+                question=question,
+                messages=self.format_history()
+            )
+            resp = prediction.answer
+
+            yield {"type": "answer", "content": resp, "status": "Inserting images"}
+
+        # prediction = self.generate_answer(context=self.context, question=question, messages=self.format_history())
+        # resp = prediction.answer
+        #
+        # yield {"type": "answer", "content": resp, "status": "Inserting images"}
 
         imaged_lines = []
         for line in resp.splitlines():
             image = self.image_retriever(line)
-            print("Checking:", line)
-            print("Image:", image)
+            temp = line
             if image:
-                line = f"<img src=\"data:image/jpeg;base64,{image_to_b64(image)}\">\n" + line
+                temp = f"\n\n<div style='display: block'><img src=\"data:image/png;base64,{image_to_b64(image)}\"></div>\n\n" + line
 
-            imaged_lines.append(line)
+            imaged_lines.append(temp)
 
         final_resp = "\n".join(imaged_lines)
 
@@ -153,6 +206,7 @@ class MultiHopRAG(dspy.Module):
             {"role": "user", "content": question},
             {"role": "assistant", "content": resp},
         ])
+
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
         if isinstance(messages, str):
