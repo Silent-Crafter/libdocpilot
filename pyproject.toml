@@ -1,7 +1,7 @@
 [project]
 name = "docpilot"
-version = "1.0.2-dev"
-description = "Add your description here"
+version = "1.1.0"
+description = "An enhanced RAG pipeline for chatting with documents with source image retrieval"
 authors = [
     { name = "Nikhil Solanke", email = "nikhilsolanke5@gmail.com" }
 ]
