@@ -7,6 +7,7 @@ from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleD
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
+from llama_index.core.node_parser import SemanticSplitterNodeParser
 from sqlalchemy import make_url
 from docpilot.parsers import CustomXLSXReader, CustomPDFReader
 from docpilot.notlogging.notlogger import NotALogger
@@ -72,7 +73,7 @@ def load_docs(
         ))
 
     indexed_nodes = get_indexed_nodes(uri, embedding_table)
-    logger.log(f"Alreaddy embedded files: {indexed_nodes}", "debug")
+    logger.log(f"Already embedded files: {indexed_nodes}", "debug")
     logger.log(f"Input files: {files}", "debug")
 
     # Exclude files that are already indexed and return a path of the file
@@ -179,7 +180,7 @@ def embed_documents(
         **kwargs
 ) -> VectorStoreIndex:
     """
-    Generate embeddings and store in the vector store. Will store the embeddings regardless of whether they are already present.
+    Generate embeddings using Semantic Chunking and store in the vector store. Will store the embeddings regardless of whether they are already present.
     :param documents: list of documents
     :param embed_model:  HuggingFace embedding model
     :param storage_context:  the StorageContext instance to be used to store the embeddings in a vector store
@@ -190,18 +191,26 @@ def embed_documents(
     show_progress = kwargs.get("show_progress", True)
     device = kwargs.get("device", "cpu")
 
-    return VectorStoreIndex.from_documents(
-        documents,
-        embed_model=HuggingFaceEmbedding(
-            model_name=embed_model,
-            cache_folder=model_cache_folder,
-            trust_remote_code=True,
-            device=device,
-        ),
-        show_progress=show_progress,
-        storage_context=storage_context,
-        **kwargs,
+    logger.info(f"Initializing Embedding Model: {embed_model}")
+
+    embed_model_instance=HuggingFaceEmbedding(
+        model_name=embed_model,
+        cache_folder=model_cache_folder,
+        trust_remote_code=True,
+        device=device,
     )
+
+    splitter=SemanticSplitterNodeParser(
+        buffer_size=3,
+        breakpoint_percentile_threshold=90,
+        embed_model=embed_model_instance
+    )
+
+    logger.info(f"Chunking {len(documents)} documents...")
+    nodes=splitter.get_nodes_from_documents(documents)
+    logger.info(f"Generated {len(nodes)} semantic nodes.")
+
+    return VectorStoreIndex(nodes)
 
 
 def get_vector_storage_context(uri: str, table: str, **kwargs) -> Tuple[StorageContext, PGVectorStore]:
