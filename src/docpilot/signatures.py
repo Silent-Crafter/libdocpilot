@@ -2,13 +2,14 @@ import dspy
 
 
 class GenerateSearchQuery(dspy.Signature):
-    """Extract important keywords from question"""
+    """Generate vector search query according to the provided question and past context"""
+    past_context = dspy.InputField(desc="past context")
     question = dspy.InputField(desc="user question")
     keywords = dspy.OutputField()
 
 class GenerateAnswer(dspy.Signature):
     """
-Answer question using facts from context only.
+Answer question using facts from context and previous conversations only.
 If the context is empty or N/A. Always Reply with 'Sorry I cannot assist you with that' regardless of question.
     """
     context = dspy.InputField(desc="will contain relevant facts")
