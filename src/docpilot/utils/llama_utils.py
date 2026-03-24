@@ -1,7 +1,6 @@
 import os
 import psycopg2
 
-
 from os import PathLike
 from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleDirectoryReader
 from llama_index.vector_stores.postgres import PGVectorStore
@@ -11,6 +10,7 @@ from llama_index.core.node_parser import SemanticSplitterNodeParser
 from sqlalchemy import make_url
 from docpilot.parsers import CustomXLSXReader, CustomPDFReader
 from docpilot.notlogging.notlogger import NotALogger
+from docpilot.utils.embed_utils import get_embedder
 
 from typing import List, Optional, Union, Tuple
 
@@ -97,85 +97,88 @@ def load_docs(
     ).load_data()
 
 
-def get_index_from_store(
-        vector_store: BasePydanticVectorStore,
-        storage_context: StorageContext,
-        embed_model: str,
-        **kwargs
-) -> VectorStoreIndex:
-    model_cache_folder = kwargs.get("model_cache_folder", "models/")
-
-    return VectorStoreIndex.from_vector_store(
-        vector_store=vector_store,
-        embed_model=HuggingFaceEmbedding(
-            model_name=embed_model,
-            cache_folder=model_cache_folder,
-            trust_remote_code=True,
-        ),
-        storage_context=storage_context,
-        show_progress=True,
-        **kwargs
-    )
-
-
 def get_vector_store_index(
         documents: List[Document],
-        uri: str,
-        embeddings_table: str,
         embed_model: str,
+        uri: Optional[str] = None,
+        embeddings_table: Optional[str] = None,
         reindex: Optional[bool] = False,
+        embed_dim: Optional[int] = 768,
+        **kwargs
 ) -> VectorStoreIndex:
+    """
+    Build or update a VectorStoreIndex backed by PGVectorStore.
+    Falls back to an in-memory index if the database is unreachable.
 
-    # Reindex the vector store i.e. generate all embeddings again
-    if reindex:
-        return reindex_vector_store(documents, uri, embeddings_table, embed_model)
+    :param documents: list of LlamaIndex Documents to index
+    :param uri: Postgres URI for PGVectorStore
+    :param embeddings_table: table storing the embeddings
+    :param embed_model: HuggingFace embedding model name
+    :param reindex: if True, truncate existing embeddings and rebuild from scratch
+    :param embed_dim: embedding dimension (used when creating the table)
+    :return: VectorStoreIndex ready for use in MultihopRAG
+    """
+    model_cache_folder = kwargs.pop("model_cache_folder", "models/")
+    device = kwargs.pop("device", "cpu")
+    show_progress = kwargs.pop("show_progress", True)
 
-    nodes = get_indexed_nodes(uri, embeddings_table)
+    embed_model_instance = get_embedder(embed_model, device=device, model_cache_folder=model_cache_folder)[0]
 
-    # Index/Embed files that haven't already been indexed
-    files_to_index = list(filter(lambda node: node.metadata['file_name'] not in nodes, documents))
+    if not (uri or embeddings_table):
+        return embed_documents(documents, embed_model_instance, show_progress=show_progress)
 
-    storage_context, vs = get_vector_storage_context(uri, embeddings_table, perform_setup=False)
-    index = get_index_from_store(vs, storage_context, embed_model)
-
-    # If new files are found, generate embeddings and store in index
-    if files_to_index:
-        logger.log(f"Found following extra files to index: {files_to_index}", "debug")
-        for file in files_to_index:
-            index.insert(file)
-
-    return index
-
-
-def reindex_vector_store(
-        documents: List[Document],
-        uri: str,
-        embeddings_table: str,
-        embed_model: str,
-        embed_dim: Optional[int] = 768
-) -> VectorStoreIndex:
-    conn = psycopg2.connect(uri)
-    cursor = conn.cursor()
-
-    # Purge all existing embeddings
     try:
-        cursor.execute('TRUNCATE TABLE {}'.format(embeddings_table))
-        conn.commit()
-    except psycopg2.errors.UndefinedTable:
-        logger.error(f"Undefined table '{embeddings_table}'")
+        if reindex:
+            # Purge existing embeddings and rebuild from scratch
+            conn = psycopg2.connect(uri)
+            cursor = conn.cursor()
+            try:
+                cursor.execute("TRUNCATE TABLE {}".format(embeddings_table))
+                conn.commit()
+            except psycopg2.errors.UndefinedTable:
+                logger.error(f"Undefined table '{embeddings_table}'")
+            finally:
+                cursor.close()
+                conn.close()
 
-    cursor.close()
-    conn.close()
+            storage_context, _ = get_vector_storage_context(
+                uri, embeddings_table, embed_dim=embed_dim, perform_setup=True
+            )
+            logger.info(f"Embedding {len(documents)} documents...")
+            return embed_documents(documents, embed_model_instance, storage_context=storage_context, show_progress=show_progress)
 
-    storage_context, _ = get_vector_storage_context(uri, embeddings_table, embed_dim=embed_dim, perform_setup=True)
+        # Incremental indexing: only embed files not yet in the store
+        indexed_nodes = get_indexed_nodes(uri, embeddings_table)
+        files_to_index = [
+            doc for doc in documents
+            if doc.metadata.get("file_name") not in indexed_nodes
+        ]
 
-    logger.info(f"Embedding {len(documents)} documents...")
-    return embed_documents(documents, embed_model, storage_context)
+        storage_context, vector_store = get_vector_storage_context(
+            uri, embeddings_table, perform_setup=False
+        )
+        index = VectorStoreIndex.from_vector_store(
+            vector_store=vector_store,
+            embed_model=embed_model_instance,
+            storage_context=storage_context,
+            show_progress=show_progress,
+        )
+
+        if files_to_index:
+            logger.log(f"Indexing {len(files_to_index)} new file(s)...", "debug")
+            for doc in files_to_index:
+                index.insert(doc)
+
+        return index
+
+    except Exception as e:
+        logger.error(f"PGVectorStore unavailable ({e}), falling back to in-memory index.")
+        return embed_documents(documents, embed_model_instance, show_progress=show_progress)
 
 
 def embed_documents(
         documents: List[Document],
-        embed_model: str,
+        embed_model: HuggingFaceEmbedding,
         storage_context: Optional[StorageContext] = None,
         **kwargs
 ) -> VectorStoreIndex:
@@ -187,18 +190,8 @@ def embed_documents(
     :param kwargs: Additional arguments/options to be passed to VectorStoreIndex.from_documents()
     :return: the index
     """
-    model_cache_folder = kwargs.get("model_cache_folder", "../models/")
-    show_progress = kwargs.get("show_progress", True)
-    device = kwargs.get("device", "cpu")
+    show_progress = kwargs.pop("show_progress", True)
 
-    logger.info(f"Initializing Embedding Model: {embed_model}")
-
-    embed_model_instance=HuggingFaceEmbedding(
-        model_name=embed_model,
-        cache_folder=model_cache_folder,
-        trust_remote_code=True,
-        device=device,
-    )
 
     splitter=SemanticSplitterNodeParser(
         buffer_size=3,
@@ -210,37 +203,10 @@ def embed_documents(
     nodes=splitter.get_nodes_from_documents(documents)
     logger.info(f"Generated {len(nodes)} semantic nodes.")
 
-    return VectorStoreIndex(nodes)
-
-
-def get_vector_storage_context(uri: str, table: str, **kwargs) -> Tuple[StorageContext, PGVectorStore]:
-    """
-    Create a vector store to store embeddings from a URI and a database and table
-    :param uri: Postgres URI
-    :param db: Postgres database
-    :param table: Postgres table
-    :param kwargs: extra configuration options like embed_dim, etc.
-    :return: The vector store and storage context
-    """
-    embed_dim = kwargs.pop('embed_dim', 768)
-    hnsw_kwargs = kwargs.pop('hnsw_kwargs', {
-        "hnsw_m": 16,
-        "hnsw_ef_construction": 64,
-        "hnsw_ef_search": 40,
-        "hnsw_dist_method": "vector_cosine_ops",
-    })
-
-    url = make_url(uri)
-    vector_store = PGVectorStore.from_params(
-        database=url.database,
-        host=url.host,
-        password=url.password,
-        port=url.port,
-        user=url.username,
-        table_name=table.replace("data_", ""),
-        embed_dim=embed_dim,
-        hnsw_kwargs=hnsw_kwargs,
-        **kwargs
+    return VectorStoreIndex.from_documents(
+        nodes,
+        embed_model=embed_model,
+        show_progress=show_progress,
+        storage_context=storage_context,
+        **kwargs,
     )
-
-    return StorageContext.from_defaults(vector_store=vector_store), vector_store

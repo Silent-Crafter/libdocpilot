@@ -1,5 +1,9 @@
 import json
 import dspy
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from docpilot.dspyclasses import MultiHopRAG
 from docpilot.utils.llama_utils import get_vector_store_index, load_docs
@@ -37,15 +41,15 @@ def m_main():
     docs = load_docs('data', config.PG_CONNECTION_URI, config.embed_table)
     mapping = {}
 
-    with open("./labels/new.json") as f:
+    with open("./labels/new2.json") as f:
         mapping = json.load(f)
 
     images = mappings_to_llamaindex_document(mapping, 'out_images')
 
-    index = get_vector_store_index(docs, config.PG_CONNECTION_URI, config.embed_table, config.embed_model)
-    image_index = get_vector_store_index(images, config.PG_CONNECTION_URI, "data_images", config.embed_model)
+    index = get_vector_store_index(docs, config.embed_model, embeddings_table=config.embed_table, uri=config.PG_CONNECTION_URI)
+    image_index = get_vector_store_index(images, config.embed_model, embeddings_table="data_images", uri=config.PG_CONNECTION_URI)
 
-    multi_hop = MultiHopRAG(index=index, image_index=image_index, num_passages=5)
+    multi_hop = MultiHopRAG(index=index, image_index=image_index, num_passages=3)
     chatbot = dspy.LM(
         model="ollama/"+config.ollama_model,
         system_prompt="Strictly follow the given instructions and adhere to the given format",
