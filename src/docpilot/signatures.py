@@ -2,7 +2,7 @@ import dspy
 
 
 class GenerateSearchQuery(dspy.Signature):
-    """Generate vector search query according to the provided question and past context"""
+    """Generate search query according to the provided question and past context. Include keywords from the provided context ONLY."""
     past_context = dspy.InputField(desc="past context")
     question = dspy.InputField(desc="user question")
     keywords = dspy.OutputField()

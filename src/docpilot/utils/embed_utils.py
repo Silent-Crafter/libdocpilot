@@ -2,44 +2,33 @@ import torch
 
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.embeddings.ollama import OllamaEmbedding
+from config import Config
 
 from typing import List, Callable, Optional, Tuple
 
 from config import Config
 
-def get_embedder(model_name: str = None, **kwargs) -> Tuple[BaseEmbedding, Callable[[str], torch.Tensor]]:
+def get_embedder(model_name: Optional[str] = None, **kwargs) -> Tuple[BaseEmbedding, Callable[[str], torch.Tensor]]:
     """
     Returns an embedder provider of llama_index and a callable that takes a string as an argument to embed the string.
     :param model_name: name of the embed model
     :param kwargs: additional kwargs for ollama or huggingface embedding
     :return:
     """
-    provider_map = {
-        "ollama": OllamaEmbedding,
-        "hf": HuggingFaceEmbedding,
-    }
-
     if model_name is None:
-        config=Config()
-        model_name=config.embed_model
+        model_name = Config.embed_model
     
-    if not model_name.startswith('hf/') and not model_name.startswith('ollama/'):
-        model_name = f"hf/{model_name}"
+    trust_remote_code = kwargs.pop("trust_remote_code", True)
+    cache_folder = kwargs.pop("cache_folder", "models/")
+    device = kwargs.pop('device', 'cpu')
 
-    provider, *model = model_name.split("/")
-    model = "/".join(model)
-
-    config = {}
-    if provider == "ollama":
-        config["base_url"] = kwargs.pop("base_url", "http://192.168.0.124:11434")
-    elif provider == "hf":
-        config["trust_remote_code"] = kwargs.pop("trust_remote_code", True)
-        config["cache_folder"] = kwargs.pop("cache_folder", "models/")
-    else:
-        raise ValueError(f"Unknown embedding provider {provider}")
-
-    embedder: BaseEmbedding = provider_map[provider](model_name=model, **config, **kwargs)
+    embedder = HuggingFaceEmbedding(
+        model_name=model_name, 
+        trust_remote_code=trust_remote_code, 
+        cache_folder=cache_folder,
+        device=device,
+        **kwargs
+    )
 
     def embed(x1: str) -> torch.Tensor:
         return torch.asarray(embedder.get_text_embedding(x1))
@@ -47,8 +36,8 @@ def get_embedder(model_name: str = None, **kwargs) -> Tuple[BaseEmbedding, Calla
     return embedder, embed
 
 
-def compute_similarity(x1: torch.Tensor, x2: torch.Tensor, dim: Optional[int] = 0,
-                       eps: Optional[float] = 1e-4) -> torch.Tensor:
+def compute_similarity(x1: torch.Tensor, x2: torch.Tensor, dim: int = 0,
+                       eps: float = 1e-4) -> torch.Tensor:
     return torch.nn.CosineSimilarity(dim=dim, eps=eps).forward(x1, x2)
 
 
