@@ -1,4 +1,5 @@
 import os
+import logging
 import psycopg2
 
 from os import PathLike
@@ -9,13 +10,11 @@ from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from sqlalchemy import make_url
 from docpilot.parsers import CustomXLSXReader, CustomPDFReader
-from docpilot.notlogging.notlogger import NotALogger
 from docpilot.utils.embed_utils import get_embedder
 
 from typing import List, Optional, Union, Tuple
 
-logger = NotALogger(__name__)
-logger.enabled = False
+logger = logging.getLogger(__name__)
 
 
 def get_indexed_nodes(uri: str, embedding_table: str) -> List[str]:
@@ -73,8 +72,8 @@ def load_docs(
         ))
 
     indexed_nodes = get_indexed_nodes(uri, embedding_table)
-    logger.log(f"Already embedded files: {indexed_nodes}", "debug")
-    logger.log(f"Input files: {files}", "debug")
+    logger.debug("Already embedded files: %s", indexed_nodes)
+    logger.debug("Input files: %s", files)
 
     # Exclude files that are already indexed and return a path of the file
     input_files = list(map(
@@ -165,7 +164,7 @@ def get_vector_store_index(
         )
 
         if files_to_index:
-            logger.log(f"Indexing {len(files_to_index)} new file(s)...", "debug")
+            logger.debug("Indexing %d new file(s)...", len(files_to_index))
             for doc in files_to_index:
                 index.insert(doc)
 

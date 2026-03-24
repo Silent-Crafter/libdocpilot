@@ -1,4 +1,5 @@
 import json
+import logging
 import dspy
 import sys
 import os
@@ -7,13 +8,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from docpilot.dspyclasses import MultiHopRAG
 from docpilot.utils.llama_utils import get_vector_store_index, load_docs
-from docpilot.notlogging.notlogger import NotALogger
 from docpilot.utils.image_utils import mappings_to_llamaindex_document
+from docpilot.utils.logger import setup_logging
 
 from config import Config as config
 
-logger = NotALogger(__name__)
-logger.enabled = True
+logger = logging.getLogger(__name__)
 
 def to_html_file(data: str):
     with open("example.html", "w", encoding="utf-8") as f:
@@ -32,8 +32,8 @@ def to_html_file(data: str):
 
 def m_main():
     message_handler = {
-        "query": logger.info,
-        "files": logger.info,
+        "query": lambda msg: logger.info("Query: %s", msg),
+        "files": lambda msg: logger.info("Files: %s", msg),
         "answer_with_images": to_html_file,
         "answer": print,
     }
@@ -81,7 +81,6 @@ def m_main():
             _in = False
 
 if __name__ == "__main__":
-    for module in logger.modules.keys():
-        logger.modules[module].enabled = True
-
+    setup_logging()
     m_main()
+

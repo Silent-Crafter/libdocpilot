@@ -1,21 +1,19 @@
+import logging
+
 import dspy
 import dspy.streaming
-import asyncio
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import NodeWithScore, TextNode
 from docpilot.signatures import GenerateSearchQuery, GenerateAnswer
 from dspy.dsp.utils.utils import deduplicate
-from docpilot.notlogging.notlogger import NotALogger
 from docpilot.utils.image_utils import image_to_b64
 from docpilot.utils.embed_utils import get_embedder
 
-from typing import AsyncGenerator, Union, Optional, List
-from typing import AsyncGenerator, Generator, Union, Optional, List, cast, final
+from typing import Generator, Union, Optional, List
 
-logger = NotALogger(__name__)
-logger.enabled = False
+logger = logging.getLogger(__name__)
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):
@@ -122,18 +120,21 @@ class MultiHopRAG(dspy.Module):
     def forward(self, question, stream: bool = False):
         context = []
         files = []
+        resp = ""
+        passages = []
+        nodes = None
 
         def serialize_message_history(history: list[dict[str, str]]):
             return '\n'.join(map(lambda d: f"{d['role']}: {d['content']}", history))
 
         query_resp = self.generate_query(past_context=serialize_message_history(self.message_history), question=question)
         query = query_resp.keywords
-        # query = question
+
         yield {"type": "query", "content": query, "status": "Finding files"}
 
-        logger.info(f"Query: {query}")
+        logger.info("Query: %s", query)
         nodes = self.retrieve(query)
-        passages = nodes.passages
+        passages = list(reversed(nodes.passages))
 
         files = deduplicate(files + nodes.files)
         context = deduplicate(context + passages)
@@ -143,7 +144,6 @@ class MultiHopRAG(dspy.Module):
 
         yield {"type": "files", "content": self.files, "status": "Generating answer"}
 
-        resp = ""
         if stream:
             streamed_generate_answer = dspy.streamify(
                 self.generate_answer,

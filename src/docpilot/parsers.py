@@ -8,12 +8,10 @@ from docpilot.preprocessors.pdf import PDFPreprocessor
 
 from typing import Any, Dict, List, Optional
 
-from docpilot.notlogging.notlogger import NotALogger
-
+import logging
 import pprint
 
-logger = NotALogger(__name__)
-logger.enabled = False
+logger = logging.getLogger(__name__)
 
 class CustomXLSXReader(BaseReader):
     def __init__(
