@@ -123,7 +123,7 @@ def get_vector_store_index(
 
     embed_model_instance = get_embedder(embed_model, device=device, model_cache_folder=model_cache_folder)[0]
 
-    if not (uri or embeddings_table):
+    if not uri or not embeddings_table:
         return embed_documents(documents, embed_model_instance, show_progress=show_progress)
 
     try:
@@ -177,7 +177,7 @@ def get_vector_store_index(
 
 def embed_documents(
         documents: List[Document],
-        embed_model: HuggingFaceEmbedding,
+        embed_model_instance: HuggingFaceEmbedding,
         storage_context: Optional[StorageContext] = None,
         **kwargs
 ) -> VectorStoreIndex:
@@ -191,7 +191,6 @@ def embed_documents(
     """
     show_progress = kwargs.pop("show_progress", True)
 
-
     splitter=SemanticSplitterNodeParser(
         buffer_size=3,
         breakpoint_percentile_threshold=90,
@@ -199,13 +198,47 @@ def embed_documents(
     )
 
     logger.info(f"Chunking {len(documents)} documents...")
-    nodes=splitter.get_nodes_from_documents(documents)
+    nodes = splitter.get_nodes_from_documents(documents)
     logger.info(f"Generated {len(nodes)} semantic nodes.")
 
-    return VectorStoreIndex.from_documents(
+    return VectorStoreIndex(
         nodes,
-        embed_model=embed_model,
+        embed_model=embed_model_instance,
         show_progress=show_progress,
         storage_context=storage_context,
         **kwargs,
     )
+
+
+def get_vector_storage_context(uri: str, table: str, **kwargs) -> Tuple[StorageContext, PGVectorStore]:
+    """
+    Create a vector store to store embeddings from a URI and a database and table
+    :param uri: Postgres URI
+    :param db: Postgres database
+    :param table: Postgres table
+    :param kwargs: extra configuration options like embed_dim, etc.
+    :return: The vector store and storage context
+    """
+    embed_dim = kwargs.pop('embed_dim', 768)
+    hnsw_kwargs = kwargs.pop('hnsw_kwargs', {
+        "hnsw_m": 16,
+        "hnsw_ef_construction": 64,
+        "hnsw_ef_search": 40,
+        "hnsw_dist_method": "vector_cosine_ops",
+    })
+
+    url = make_url(uri)
+    vector_store = PGVectorStore.from_params(
+        database=url.database,
+        host=url.host,
+        password=url.password,
+        port=str(url.port),
+        user=url.username,
+        table_name=table.replace("data_", ""),
+        embed_dim=embed_dim,
+        hnsw_kwargs=hnsw_kwargs,
+        **kwargs
+    )
+
+    return StorageContext.from_defaults(vector_store=vector_store), vector_store
+

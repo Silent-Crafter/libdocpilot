@@ -8,7 +8,7 @@ from typing import List, Callable, Optional, Tuple
 
 from config import Config
 
-def get_embedder(model_name: Optional[str] = None, **kwargs) -> Tuple[BaseEmbedding, Callable[[str], torch.Tensor]]:
+def get_embedder(model_name: Optional[str] = None, **kwargs) -> Tuple[HuggingFaceEmbedding, Callable[[str], torch.Tensor]]:
     """
     Returns an embedder provider of llama_index and a callable that takes a string as an argument to embed the string.
     :param model_name: name of the embed model
