@@ -1,4 +1,5 @@
 import dspy
+import dspy.streaming
 import asyncio
 
 from llama_index.core import VectorStoreIndex
@@ -20,17 +21,17 @@ class LlamaIndexRMClient(dspy.Retrieve):
 
     def forward(
             self,
-            query: str = None,
+            query: str,
             k: Optional[int] = None,
             by_prob: bool = True,
             with_metadata: bool = False,
             **kwargs,
-    ) -> Union[List[str], dspy.Prediction, List[dspy.Prediction]]:
+    ) -> dspy.Prediction:
 
-        nodes = self.retriever.retrieve(query)
+        nodes: List[NodeWithScore] = self.retriever.retrieve(query)
 
         good_nodes = list(filter(
-            lambda node: node.score >= 0.64,
+            lambda node: node.score and node.score >= 0.64,
             nodes
         ))
 
@@ -58,10 +59,13 @@ class LlamaIndexRMClient(dspy.Retrieve):
         ))
 
         return dspy.Prediction(
-            passages=list(reversed(passages)),
+            passages=passages,
             files=files,
             scores=scores
         )
+
+    def __call__(self, *args, **kwargs) -> dspy.Prediction:
+        return self.forward(*args, **kwargs)
 
 
 class ImageRetriever(dspy.Retrieve):
@@ -71,7 +75,7 @@ class ImageRetriever(dspy.Retrieve):
 
     def forward(
             self,
-            query: str = None,
+            query: str,
             k: Optional[int] = None,
             **kwargs
     ) -> Union[str, None]:
@@ -140,39 +144,26 @@ class MultiHopRAG(dspy.Module):
             streamed_generate_answer = dspy.streamify(
                 self.generate_answer,
                 stream_listeners=[dspy.streaming.StreamListener(signature_field_name="answer")],
+                async_streaming=False
             )
 
-            accumulated = ""
+            resp_generator: Generator = streamed_generate_answer(context=self.context, question=question, messages=self.format_history())
 
-            resp_generator: AsyncGenerator = streamed_generate_answer(context=self.context, question=question, messages=self.format_history())
-
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            while True:
-                try:
-                    chunk = loop.run_until_complete(resp_generator.__anext__())
-                    if isinstance(chunk, dspy.Prediction):
-                        accumulated = chunk.answer
-                        yield {
-                            "type": "answer",
-                            "content": accumulated,
-                            "status": "Inserting images"
-                        }
-                        break
-
-                    token = chunk.chunk  # streamed partial text
-                    accumulated += token
-
+            for chunk in resp_generator:
+                if isinstance(chunk, dspy.Prediction):
+                    resp = chunk.answer
                     yield {
                         "type": "answer",
-                        "content": accumulated,
-                        "status": "Streaming"
+                        "content": chunk.answer,
+                        "status": "Inserting images"
                     }
-                except StopAsyncIteration:
                     break
 
-            resp = accumulated
-            loop.close()
+                yield {
+                    "type": "streaming_answer",
+                    "content": chunk.chunk,
+                    "status": "Streaming"
+                }
 
         else:
             prediction = self.generate_answer(
@@ -206,6 +197,7 @@ class MultiHopRAG(dspy.Module):
             {"role": "user", "content": question},
             {"role": "assistant", "content": resp},
         ])
+        yield {"type": "finalization", "content": None, "status": "DONE"}
 
 
     def update_message_history(self, messages: Union[List[dict[str, str]], str]):
