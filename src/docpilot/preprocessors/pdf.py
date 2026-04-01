@@ -45,28 +45,28 @@ class PDFPreprocessor:
             return 0.0        
         return inter_area/bbox1_area
         
-    def extract_image_with_smask(self, img_item) -> Tuple[bytes, str]:
+    def extract_image_with_smask(self, img_item) -> Tuple[bytes, str] | None:
         """Extract image with soft mask (SMask) support from PDF.
         
         Args:
             img_item: Image item tuple containing xref and optional smask_xref.
             
         Returns:
-            Tuple of (image_bytes, image_format) where image_bytes is the processed image
+            1) Tuple of (image_bytes, image_format) where image_bytes is the processed image
             and image_format is the file extension (e.g., 'png').
+            2) None if extraction fails.
         """
         xref = img_item[0]
         smask_xref = img_item[1] if len(img_item) > 1 else 0
 
         try:
-            # Extract the base color image
             ei = self.doc.extract_image(xref)
-
         except Exception as e:
-            raise ValueError(f"Could not extract image for xref={xref}: {e}") from e
+            print(f"Error extracting image for xref={xref}: {e}")
+            return None
         
         raw_bytes = ei["image"]
-            
+
         if smask_xref > 0:
             print(f"smask={smask_xref} detected : applying manual alpha")
 
@@ -88,20 +88,19 @@ class PDFPreprocessor:
             buf = io.BytesIO()
             colour_img.save(buf, format="PNG")
             img_bytes = buf.getvalue()
-            return img_bytes, "png"               
+            return img_bytes, "png"          
+             
         return raw_bytes, ei.get("ext", "png")
-
             
-
     def process_image(self, img_bytes: bytes) -> str | None:
         """Process an image by converting to RGBA, handling transparency, and saving.
         
         Args:
             img_bytes: Raw image bytes to process.
-            img_hash: Hash identifier for the image file.
             
         Returns:
-            Path to the saved processed image.
+            1) Path to the saved processed image.
+            2) None if processing fails.
         """    
         try:
             img = Image.open(io.BytesIO(img_bytes))            
@@ -122,26 +121,32 @@ class PDFPreprocessor:
                 print("Opaque : Saving as it is.....")                    
                 final_img = img.convert("RGB")
 
-            img_to_bytes = io.BytesIO()
-            final_img.save(img_to_bytes, format="PNG", optimizer=True)
-            final_bytes = img_to_bytes.getvalue()
 
+            # img_hash = hashlib.sha256(final_img.tobytes()).hexdigest()[:16]  
+
+            # final_filename = f"{img_hash}.png"
+            # final_path = os.path.join(self.img_dir, final_filename)
+
+            # # Save the image
+            # final_img.save(final_path, format="PNG", optimize=True)
+
+
+            img_to_bytes = io.BytesIO()
+            final_img.save(img_to_bytes, format="PNG", optimize=True)
+            final_bytes = img_to_bytes.getvalue()
+            
             img_hash = hashlib.sha256(final_bytes).hexdigest()[:16]
             final_filename = f"{img_hash}.png"
             final_path = os.path.join(self.img_dir, final_filename)
 
             with open(final_path, "wb") as f:
                 f.write(final_bytes)
-
+            
             print(f"Saved as {final_filename}")
             return final_path
             
-        except (IOError, OSError, ValueError) as e:
-            if final_img is not None:
-                print(f"Error processing image: {e}")
-                fallback_path = os.path.join(self.img_dir, f"{img_hash}.png")
-                final_img.save(fallback_path, format="PNG")
-                return fallback_path
+        except (IOError, OSError, ValueError, NameError) as e:
+            print(f"Error processing image: {e}")
             return None
 
     def get_elements(self) -> List[Dict]:
@@ -172,7 +177,12 @@ class PDFPreprocessor:
                 if any(self._get_overlap_ratio(bbox, t["bbox"]) > 0.6 for t in page_tables):
                     continue
 
-                img_bytes, _ = self.extract_image_with_smask(img_item)
+                result = self.extract_image_with_smask(img_item)
+                if result is None:
+                    print(f"Failed to extract image at page {page_num + 1}, skipping...")
+                    continue
+
+                img_bytes, _ = result
                 img_path = self.process_image(img_bytes)
 
                 all_elements.append({
