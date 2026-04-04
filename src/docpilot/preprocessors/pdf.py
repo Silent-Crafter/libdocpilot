@@ -121,30 +121,8 @@ class PDFPreprocessor:
                 print("Opaque : Saving as it is.....")                    
                 final_img = img.convert("RGB")
 
-
-            # img_hash = hashlib.sha256(final_img.tobytes()).hexdigest()[:16]  
-
-            # final_filename = f"{img_hash}.png"
-            # final_path = os.path.join(self.img_dir, final_filename)
-
-            # # Save the image
-            # final_img.save(final_path, format="PNG", optimize=True)
-
-
-            img_to_bytes = io.BytesIO()
-            final_img.save(img_to_bytes, format="PNG", optimize=True)
-            final_bytes = img_to_bytes.getvalue()
-            
-            img_hash = hashlib.sha256(final_bytes).hexdigest()[:16]
-            final_filename = f"{img_hash}.png"
-            final_path = os.path.join(self.img_dir, final_filename)
-
-            with open(final_path, "wb") as f:
-                f.write(final_bytes)
-            
-            print(f"Saved as {final_filename}")
-            return final_path
-            
+            return final_img
+        
         except (IOError, OSError, ValueError, NameError) as e:
             print(f"Error processing image: {e}")
             return None
@@ -169,13 +147,30 @@ class PDFPreprocessor:
                     "processed": False
                 })
 
+            # image + text and ignoring blocks inside table 
+            page_dict = page.get_text("dict")
+            blocks = page_dict.get("blocks", [])
+
+            for block in blocks:
+                block_rect = block["bbox"]
+                is_inside_table=False
+                for tab_obj in page_tables:
+                    if self._get_overlap_ratio(block_rect, tab_obj["bbox"]) > 0.6:
+                        is_inside_table=True
+                        
+                        if not tab_obj["processed"]:
+                            all_elements.append(tab_obj)
+                            tab_obj["processed"]=True
+                        break
+
+                if is_inside_table:
+                    continue
+                
+
             # Images
             img_list = page.get_images(full=True)
             for img_item in img_list:
                 bbox = fitz.Rect(img_item[1:5])
-
-                if any(self._get_overlap_ratio(bbox, t["bbox"]) > 0.6 for t in page_tables):
-                    continue
 
                 result = self.extract_image_with_smask(img_item)
                 if result is None:
@@ -183,7 +178,28 @@ class PDFPreprocessor:
                     continue
 
                 img_bytes, _ = result
-                img_path = self.process_image(img_bytes)
+
+                final_img = self.process_image(img_bytes)
+                if final_img is None:
+                    print(f"Failed to process image at page {page_num + 1}, skipping...")
+                    continue
+
+                temp_path = os.path.join(self.img_dir, "temp.png")
+                final_img.save(temp_path, format="PNG")
+
+                with open(temp_path, "rb") as f:
+                    img_bytes = f.read()
+
+                # Calculate hash from raw extracted bytes
+                img_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
+                img_path = os.path.join(self.img_dir, f"{img_hash}.png")
+
+                if os.path.exists(img_path):
+                    print(f"Image already exists, skipping processing: {img_hash}.png")
+                    os.remove(temp_path)  # Clean up temp file
+                else:
+                    final_img.save(img_path, format="PNG")
+                    print(f"Saved image: {img_hash}.png")
 
                 all_elements.append({
                     "type": "image",
@@ -194,12 +210,9 @@ class PDFPreprocessor:
                 })
 
             # Text blocks
-            page_dict = page.get_text("dict")
-            blocks = page_dict.get("blocks", [])
-
             for block in blocks:
-                if not isinstance(block, dict) or block.get("type") != 0:
-                    continue
+                # if not isinstance(block, dict) or block.get("type") != 0:
+                #     continue
 
                 text = " ".join(
                     span.get("text", "") 
@@ -211,9 +224,9 @@ class PDFPreprocessor:
                     continue
 
                 block_rect = block.get("bbox")
-                if block_rect and any(self._get_overlap_ratio(block_rect, t["bbox"]) > 0.6 
-                                    for t in page_tables):
-                    continue
+                # if block_rect and any(self._get_overlap_ratio(block_rect, t["bbox"]) > 0.6 
+                #                     for t in page_tables):
+                #     continue
 
                 all_elements.append({
                     "type": "text",
