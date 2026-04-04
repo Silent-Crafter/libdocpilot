@@ -9,7 +9,7 @@ from llama_index.core.schema import NodeWithScore, TextNode
 from docpilot.signatures import GenerateSearchQuery, GenerateAnswer
 from dspy.dsp.utils.utils import deduplicate
 from docpilot.utils.image_utils import image_to_b64
-from docpilot.utils.embed_utils import get_embedder
+from docpilot.utils.embed_utils import Embedder
 
 from typing import Generator, Union, Optional, List
 
@@ -102,6 +102,8 @@ class ImageRetriever(dspy.Retrieve):
 
 
 class MultiHopRAG(dspy.Module):
+    embed_model_instance = None
+
     def __init__(self, index: VectorStoreIndex, image_index: VectorStoreIndex, num_passages=3):
         super().__init__()
 
@@ -115,7 +117,8 @@ class MultiHopRAG(dspy.Module):
 
         self.context = []
         self.files = []
-        self.embed_model_instance = get_embedder()[0]
+        if not MultiHopRAG.embed_model_instance:
+            MultiHopRAG.embed_model_instance = Embedder.get_embedder()
 
     def forward(self, question, stream: bool = False):
         context = []
@@ -263,4 +266,9 @@ class MultiHopRAG(dspy.Module):
         ))
 
         return messages
+
+def configure_llm(model: str, base_url: str, cache: bool, **kwargs):
+    lm = dspy.LM(model="ollama/"+model, base_url=base_url, cache=cache, **kwargs)
+    dspy.settings.configure(lm=lm)
+    return lm
 

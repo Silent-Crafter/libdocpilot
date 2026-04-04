@@ -2,16 +2,13 @@ import io
 import pprint
 import hashlib
 import os
-from typing import List, Optional, Union, Dict, Tuple
 import fitz
-from annotated_types import doc
+import logging
+
+from typing import List, Optional, Union, Dict, Tuple, Iterable
 from PIL import Image
 
-
-# from docpilot.notlogging.notlogger import NotALogger
-
-# logger = NotALogger(__name__)
-# logger.enabled = False
+logger = logging.getLogger(__name__)
 
 class PDFPreprocessor:
     """A preprocessor for extracting elements from PDF documents.
@@ -24,16 +21,18 @@ class PDFPreprocessor:
         if not isinstance(file_path, (str, os.PathLike)):
             raise TypeError(f"Expected str, os.PathLike got {type(file_path).__name__}")
 
-        self.file_path=file_path
-        self.doc=fitz.open(file_path)
-        self.img_dir="out_images/"
+        self.file_path = file_path
+
+        # weird type hint fix
+        self.doc: fitz.Document = fitz.open(file_path)
+        self.img_dir = "out_images/"
         os.makedirs(self.img_dir, exist_ok=True)
 
-    def _get_overlap_ratio(self, bbox1: Tuple[float, float, float, float], bbox2: Tuple[float, float, float, float]) -> float:
-        x0=max(bbox1[0], bbox2[0])
-        y0=max(bbox1[1], bbox2[1])
-        x1=min(bbox1[2], bbox2[2])
-        y1=min(bbox1[3], bbox2[3])
+    def __get_overlap_ratio(self, bbox1: Tuple[float, float, float, float], bbox2: Tuple[float, float, float, float]) -> float:
+        x0 = max(bbox1[0], bbox2[0])
+        y0 = max(bbox1[1], bbox2[1])
+        x1 = min(bbox1[2], bbox2[2])
+        y1 = min(bbox1[3], bbox2[3])
 
         if(x0>=x1 or y0>=y1):
             return 0.0
@@ -45,54 +44,46 @@ class PDFPreprocessor:
             return 0.0        
         return inter_area/bbox1_area
         
-    def extract_image_with_smask(self, img_item) -> Tuple[bytes, str] | None:
-        """Extract image with soft mask (SMask) support from PDF.
+    def __extract_and_apply_smask(self, raw_bytes, smask_xref) -> bytes:
+        """Extract and apply given image raw_bytes with its soft mask (SMask) from PDF.
         
         Args:
-            img_item: Image item tuple containing xref and optional smask_xref.
+            raw_bytes: Image item tuple containing xref and optional smask_xref.
+            smask_xref: Image item tuple containing xref and optional smask_xref.
             
         Returns:
             1) Tuple of (image_bytes, image_format) where image_bytes is the processed image
             and image_format is the file extension (e.g., 'png').
             2) None if extraction fails.
         """
-        xref = img_item[0]
-        smask_xref = img_item[1] if len(img_item) > 1 else 0
-
-        try:
-            ei = self.doc.extract_image(xref)
-        except Exception as e:
-            print(f"Error extracting image for xref={xref}: {e}")
-            return None
         
-        raw_bytes = ei["image"]
+        if smask_xref == 0 or raw_bytes is None:
+            return raw_bytes
 
-        if smask_xref > 0:
-            print(f"smask={smask_xref} detected : applying manual alpha")
+        logging.debug(f"smask={smask_xref} detected : applying manual alpha")
 
-            # Load color image
-            colour_img = Image.open(io.BytesIO(raw_bytes)).convert("RGBA")
+        # Load color image
+        colour_img = Image.open(io.BytesIO(raw_bytes)).convert("RGBA")
 
-            # Load SMask 
-            smask_ei = self.doc.extract_image(smask_xref)
-            mask_img = Image.open(io.BytesIO(smask_ei["image"])).convert("L")
+        # Load SMask
+        smask_ei = self.doc.extract_image(smask_xref)
+        mask_img = Image.open(io.BytesIO(smask_ei["image"])).convert("L")
 
-            # Resize mask accordingly
-            if mask_img.size != colour_img.size:
-                mask_img = mask_img.resize(colour_img.size)
+        # Resize mask accordingly
+        if mask_img.size != colour_img.size:
+            mask_img = mask_img.resize(colour_img.size)
 
-            # Apply mask as alpha channel
-            colour_img.putalpha(mask_img)
+        # Apply mask as alpha channel
+        colour_img.putalpha(mask_img)
 
-            # Convert back to bytes (PNG to preserve transparency)
-            buf = io.BytesIO()
-            colour_img.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-            return img_bytes, "png"          
-             
-        return raw_bytes, ei.get("ext", "png")
+        # Convert back to bytes (PNG to preserve transparency)
+        buf = io.BytesIO()
+        colour_img.save(buf, format="PNG")
+        img_bytes = buf.getvalue()
+
+        return img_bytes
             
-    def process_image(self, img_bytes: bytes) -> str | None:
+    def __process_image(self, img_bytes: bytes) -> Union[Image.Image, None]:
         """Process an image by converting to RGBA, handling transparency, and saving.
         
         Args:
@@ -102,6 +93,7 @@ class PDFPreprocessor:
             1) Path to the saved processed image.
             2) None if processing fails.
         """    
+        # TODO: REPLACE entire logic. if smask is not available it means the image is already opaque
         try:
             img = Image.open(io.BytesIO(img_bytes))            
 
@@ -111,20 +103,20 @@ class PDFPreprocessor:
             has_transparent_bg = alpha.getextrema()[0] < 255  
 
             if has_transparent_bg:
-                print("Transparent image : Adding white background....")
+                logging.debug("Transparent image : Adding white background....")
 
                 # Add solid white background and use alpha as mask
                 white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
                 white_bg.paste(img, (0,0), img)
                 final_img = white_bg.convert("RGB")
             else:
-                print("Opaque : Saving as it is.....")                    
+                logging.debug("Opaque : Saving as it is.....")
                 final_img = img.convert("RGB")
 
             return final_img
         
         except (IOError, OSError, ValueError, NameError) as e:
-            print(f"Error processing image: {e}")
+            logging.error(f"Error processing image: {e}")
             return None
 
     def get_elements(self) -> List[Dict]:
@@ -138,6 +130,7 @@ class PDFPreprocessor:
                 df = tab.to_pandas()
                 if df.empty:
                     continue
+
                 page_tables.append({
                     "type": "table",
                     "content": "<Table here: Table's VLM generated description>",
@@ -155,7 +148,7 @@ class PDFPreprocessor:
                 block_rect = block["bbox"]
                 is_inside_table=False
                 for tab_obj in page_tables:
-                    if self._get_overlap_ratio(block_rect, tab_obj["bbox"]) > 0.6:
+                    if self.__get_overlap_ratio(block_rect, tab_obj["bbox"]) > 0.6:
                         is_inside_table=True
                         
                         if not tab_obj["processed"]:
@@ -166,40 +159,38 @@ class PDFPreprocessor:
                 if is_inside_table:
                     continue
                 
-
             # Images
             img_list = page.get_images(full=True)
             for img_item in img_list:
-                bbox = fitz.Rect(img_item[1:5])
+                bbox = page.get_image_bbox(img_item)
+                xref = img_item[0]
 
-                result = self.extract_image_with_smask(img_item)
-                if result is None:
-                    print(f"Failed to extract image at page {page_num + 1}, skipping...")
+                try:
+                    ei = self.doc.extract_image(xref)
+                except Exception as e:
+                    logger.error(f"Error extracting image for xref={xref}: {e}")
                     continue
 
-                img_bytes, _ = result
+                raw_bytes = ei.get("image")
+                smask_xref = ei.get("smask")
 
-                final_img = self.process_image(img_bytes)
-                if final_img is None:
-                    print(f"Failed to process image at page {page_num + 1}, skipping...")
-                    continue
-
-                temp_path = os.path.join(self.img_dir, "temp.png")
-                final_img.save(temp_path, format="PNG")
-
-                with open(temp_path, "rb") as f:
-                    img_bytes = f.read()
 
                 # Calculate hash from raw extracted bytes
-                img_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
+                img_hash = hashlib.sha256(raw_bytes).hexdigest()[:16]
                 img_path = os.path.join(self.img_dir, f"{img_hash}.png")
 
                 if os.path.exists(img_path):
-                    print(f"Image already exists, skipping processing: {img_hash}.png")
-                    os.remove(temp_path)  # Clean up temp file
-                else:
-                    final_img.save(img_path, format="PNG")
-                    print(f"Saved image: {img_hash}.png")
+                    logging.debug(f"Image already exists, skipping processing: {img_hash}.png")
+                    continue
+
+                img_bytes = self.__extract_and_apply_smask(raw_bytes, smask_xref)
+                final_img = self.__process_image(img_bytes)
+                if final_img is None:
+                    logging.error(f"Failed to process image at page {page_num + 1}, skipping...")
+                    continue
+
+                final_img.save(img_path, format="PNG")
+                logging.debug(f"Saved image: {img_hash}.png")
 
                 all_elements.append({
                     "type": "image",
@@ -211,9 +202,6 @@ class PDFPreprocessor:
 
             # Text blocks
             for block in blocks:
-                # if not isinstance(block, dict) or block.get("type") != 0:
-                #     continue
-
                 text = " ".join(
                     span.get("text", "") 
                     for line in block.get("lines", []) 
@@ -224,10 +212,6 @@ class PDFPreprocessor:
                     continue
 
                 block_rect = block.get("bbox")
-                # if block_rect and any(self._get_overlap_ratio(block_rect, t["bbox"]) > 0.6 
-                #                     for t in page_tables):
-                #     continue
-
                 all_elements.append({
                     "type": "text",
                     "content": text,
@@ -247,7 +231,7 @@ class PDFPreprocessor:
         self.doc.close()
 
 if __name__=="__main__":
-    pdfpre=PDFPreprocessor("Data\\Machine Learning.pdf")
+    pdfpre = PDFPreprocessor(r"data/Machine Learning.pdf")
     returned_list = pdfpre.get_elements()
     pprint.pprint([i for i in returned_list if i["page"] in [3]])
 

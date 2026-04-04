@@ -2,15 +2,14 @@ import os
 import logging
 import psycopg2
 
-from os import PathLike
+from pathlib import Path
 from llama_index.core import VectorStoreIndex, Document, StorageContext, SimpleDirectoryReader
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from sqlalchemy import make_url
 from docpilot.parsers import CustomXLSXReader, CustomPDFReader
-from docpilot.utils.embed_utils import get_embedder
+from docpilot.utils.embed_utils import Embedder
 
 from typing import List, Optional, Union, Tuple
 
@@ -40,7 +39,7 @@ def get_indexed_nodes(uri: str, embedding_table: str) -> List[str]:
 
 
 def load_docs(
-        doc_dir: Union[PathLike[str], str],
+        doc_dir: Union[Path, str],
         uri: str,
         embedding_table: str,
         **kwargs
@@ -71,6 +70,7 @@ def load_docs(
             os.listdir(doc_dir)
         ))
 
+    # TODO: Add checks for when db doesn't contain the table
     indexed_nodes = get_indexed_nodes(uri, embedding_table)
     logger.debug("Already embedded files: %s", indexed_nodes)
     logger.debug("Input files: %s", files)
@@ -121,7 +121,7 @@ def get_vector_store_index(
     device = kwargs.pop("device", "cpu")
     show_progress = kwargs.pop("show_progress", True)
 
-    embed_model_instance = get_embedder(embed_model, device=device, model_cache_folder=model_cache_folder)[0]
+    embed_model_instance = Embedder.get_embedder(embed_model, device=device, model_cache_folder=model_cache_folder)
 
     if not uri or not embeddings_table:
         return embed_documents(documents, embed_model_instance, show_progress=show_progress)
