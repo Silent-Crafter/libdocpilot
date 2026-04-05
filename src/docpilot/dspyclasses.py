@@ -1,4 +1,5 @@
 import logging
+import os
 import dspy
 
 from pathlib import Path
@@ -385,6 +386,98 @@ class MultiHopRAG(dspy.Module):
             image_nodes = SimpleNodeParser().get_nodes_from_documents(image_docs)
             self.__class__.image_retriever.index.insert_nodes(image_nodes)
             self.__class__.image_retriever.retriever = self.__class__.image_retriever.index.as_retriever()
+
+    def delete_document(self, filename: str, uri: str, text_table: str, image_table: str):
+        """
+        Delete a document and all its associated data:
+        1. Remove embedding rows from data_images (by source_file)
+        2. Delete associated image files from disk
+        3. Remove embedding rows from data_items (by file_name)
+        4. Rebuild in-memory indexes from the vector stores
+
+        :param filename: The basename of the document file (e.g. 'Machine Learning.pdf')
+        :param uri: Postgres connection URI
+        :param text_table: The embeddings table for text (e.g. 'data_items')
+        :param image_table: The embeddings table for images (e.g. 'data_images')
+        """
+        import psycopg2
+
+        conn = psycopg2.connect(uri)
+        cursor = conn.cursor()
+
+        try:
+            # 1. Find image file paths from data_images before deleting
+            cursor.execute(
+                f"SELECT DISTINCT metadata_->>'file_name' FROM {image_table} "
+                f"WHERE metadata_->>'source_file' = %s",
+                (filename,)
+            )
+            image_paths = [row[0] for row in cursor.fetchall() if row[0]]
+
+            # 2. Delete rows from data_images
+            cursor.execute(
+                f"DELETE FROM {image_table} WHERE metadata_->>'source_file' = %s",
+                (filename,)
+            )
+            deleted_images = cursor.rowcount
+            logger.info("Deleted %d rows from %s for source_file=%s", deleted_images, image_table, filename)
+
+            # 3. Delete rows from data_items
+            cursor.execute(
+                f"DELETE FROM {text_table} WHERE metadata_->>'file_name' = %s",
+                (filename,)
+            )
+            deleted_texts = cursor.rowcount
+            logger.info("Deleted %d rows from %s for file_name=%s", deleted_texts, text_table, filename)
+
+            conn.commit()
+
+            # 4. Delete image files from disk
+            for img_path in image_paths:
+                try:
+                    if os.path.isfile(img_path):
+                        os.remove(img_path)
+                        logger.info("Deleted image file: %s", img_path)
+                except OSError as e:
+                    logger.warning("Could not delete image file %s: %s", img_path, e)
+
+            # 5. Rebuild in-memory indexes from the vector stores
+            self._rebuild_indexes(uri, text_table, image_table)
+
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+    def _rebuild_indexes(self, uri: str, text_table: str, image_table: str):
+        """Rebuild VectorStoreIndex instances from PG and reassign to retrievers."""
+        from docpilot.utils.llama_utils import get_vector_storage_context
+
+        embed_model = self.__class__.embed_model_instance
+
+        # Rebuild text index
+        _, text_vs = get_vector_storage_context(uri, text_table, perform_setup=False)
+        text_index = VectorStoreIndex.from_vector_store(
+            vector_store=text_vs,
+            embed_model=embed_model,
+        )
+        if self.__class__.retrieve is not None:
+            self.__class__.retrieve.index = text_index
+            self.__class__.retrieve.retriever = text_index.as_retriever(
+                similarity_top_k=self.__class__.retrieve.k
+            )
+
+        # Rebuild image index
+        _, image_vs = get_vector_storage_context(uri, image_table, perform_setup=False)
+        image_index = VectorStoreIndex.from_vector_store(
+            vector_store=image_vs,
+            embed_model=embed_model,
+        )
+        if self.__class__.image_retriever is not None:
+            self.__class__.image_retriever.index = image_index
+            self.__class__.image_retriever.retriever = image_index.as_retriever()
 
 
 def configure_llm(model: str, cache: bool, base_url: Optional[str] = None, **kwargs):
