@@ -191,7 +191,7 @@ def embed_documents(
     """
     show_progress = kwargs.pop("show_progress", True)
 
-    splitter=SemanticSplitterNodeParser(
+    splitter = SemanticSplitterNodeParser(
         buffer_size=3,
         breakpoint_percentile_threshold=90,
         embed_model=embed_model_instance

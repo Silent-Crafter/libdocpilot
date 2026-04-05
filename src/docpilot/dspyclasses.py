@@ -1,25 +1,26 @@
 import logging
 import dspy
 
+from pathlib import Path
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.core import Document, VectorStoreIndex
-from llama_index.core.node_parser import SemanticSplitterNodeParser
+from llama_index.core import Document, SimpleDirectoryReader, VectorStoreIndex
+from llama_index.core.node_parser import SemanticSplitterNodeParser, SentenceSplitter, SimpleNodeParser
 from llama_index.core.schema import NodeWithScore, TextNode
+from docpilot.parsers import CustomPDFReader
 from docpilot.signatures import AnswerPrompt, QueryPrompt, build_prompt_from_signature
 from dspy.dsp.utils.utils import deduplicate
-from docpilot.utils.image_utils import image_to_b64
+from docpilot.utils.image_utils import image_to_b64, mappings_to_llamaindex_document
 from docpilot.utils.embed_utils import Embedder
 from docpilot.lm import DspyLMWrapper
 
 from typing import Union, Optional, List, Callable, Any
 from config import Config
-
 logger = logging.getLogger(__name__)
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):
         super().__init__(k=k)
-        self.index = index
+        self.index: VectorStoreIndex = index
         self.retriever = index.as_retriever(similarity_top_k = k)
 
     def forward(
@@ -67,6 +68,10 @@ class LlamaIndexRMClient(dspy.Retrieve):
             scores=scores
         )
 
+    def update_index(self, nodes: list):
+        self.index.insert_nodes(nodes)
+        self.retriever = self.index.as_retriever()
+
     def __call__(self, *args, **kwargs) -> dspy.Prediction:
         return self.forward(*args, **kwargs)
 
@@ -100,6 +105,12 @@ class ImageRetriever(dspy.Retrieve):
         # logger.info(f"Images: {b64_images}")
 
         return images
+
+    def update_labels(self, new_labels: dict):
+        docs = mappings_to_llamaindex_document(new_labels, 'out_image')
+        nodes = SimpleNodeParser().get_nodes_from_documents(docs)
+        self.index.insert_nodes(nodes)
+        self.retriever = self.index.as_retriever()
 
     def __call__(self, *args, **kwargs) -> List[dspy.Prediction]: return self.forward(*args, **kwargs)
 
@@ -170,29 +181,6 @@ class MultiHopRAG(dspy.Module):
         yield {"type": "files", "content": self.files, "status": "Generating answer"}
 
         if stream:
-            # streamed_generate_answer = dspy.streamify(
-            #     self.generate_answer,
-            #     stream_listeners=[dspy.streaming.StreamListener(signature_field_name="answer")],
-            #     async_streaming=False
-            # )
-            #
-            # resp_generator: Generator = streamed_generate_answer(context=self.context, question=question, messages=self.format_history())
-            #
-            # for chunk in resp_generator:
-            #     if isinstance(chunk, dspy.Prediction):
-            #         resp = chunk.answer
-            #         yield {
-            #             "type": "answer",
-            #             "content": chunk.answer,
-            #             "status": "Inserting images"
-            #         }
-            #         break
-            #
-            #     yield {
-            #         "type": "streaming_answer",
-            #         "content": chunk.chunk,
-            #         "status": "Streaming"
-            #     }
             accumulated = ""
             for chunk in self.generate_answer(context=self.context, question=question, messages=self.format_history(), stream=True):
                 accumulated += chunk
@@ -201,8 +189,8 @@ class MultiHopRAG(dspy.Module):
                     "content": chunk,
                     "status": "Streaming"
                 }
-            resp = accumulated
 
+            resp = accumulated
 
         else:
             prediction = self.generate_answer(
@@ -210,10 +198,9 @@ class MultiHopRAG(dspy.Module):
                 question=question,
                 messages=self.format_history()
             )
-            # resp = prediction.answer
-            resp: str = prediction
+            resp = prediction
 
-            yield {"type": "answer", "content": resp, "status": "Inserting images"}
+        yield {"type": "answer", "content": resp, "status": "Inserting images"}
 
         imaged_chunks, *_ = self.create_image_chunks(resp)
 
@@ -299,6 +286,30 @@ class MultiHopRAG(dspy.Module):
         ))
 
         return messages
+
+
+    def add_new_document(self, file_path: str | Path):
+        if self.__class__.retrieve is None:
+            raise RuntimeError(f"Instantiate {self.__class__.__qualname__} first")
+
+        if not isinstance(file_path, Path):
+            file_path = Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        ext = file_path.suffix.lower()
+
+        if ext == '.pdf':
+            docs = CustomPDFReader().load_data(file_path)
+
+        else:
+            docs = SimpleDirectoryReader(input_files=[file_path]).load_data(show_progress=True)
+
+        splitter = SemanticSplitterNodeParser(buffer_size=3, embed_model=self.__class__.embed_model_instance)
+        nodes = splitter.get_nodes_from_documents(docs)
+
+        self.__class__.retrieve.update_index(nodes)
 
 
 def configure_llm(model: str, base_url: str, cache: bool, **kwargs):

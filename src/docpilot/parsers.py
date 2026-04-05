@@ -85,7 +85,7 @@ class CustomPDFReader(BaseReader):
 
     def load_data(
             self,
-            file: Path,
+            file: str | Path,
             extra_info: Optional[Dict] = None,
             use_artifact_pdf: bool = True,
     ) -> List[Document]:
@@ -93,8 +93,8 @@ class CustomPDFReader(BaseReader):
         if not isinstance(file, Path):
             file = Path(file)
 
-        self.preprocessor=PDFPreprocessor(str(file))
-        raw_elements=self.preprocessor.get_elements()
+        self.preprocessor = PDFPreprocessor(str(file))
+        raw_elements = self.preprocessor.get_elements()
         self.preprocessor.close()
 
         documents=[]
@@ -133,7 +133,6 @@ class CustomPDFReader(BaseReader):
                 text_buffer+=item["content"] +"\n\n"
             
             elif item["type"]=="image":
-                text_buffer+=f"\n[IMAGE REF: {item['content']}]\n"
                 documents.append(Document(
                     text=item['content'],
                     metadata={
@@ -146,7 +145,6 @@ class CustomPDFReader(BaseReader):
                 ))
             
             elif item["type"]=="table":
-                text_buffer+=f"\n[TABLE REF: {item['content']}]\n"
                 documents.append(Document(
                     text=item['content'],
                     metadata={
@@ -163,6 +161,6 @@ class CustomPDFReader(BaseReader):
         return documents
     
 if __name__=="__main__":
-    pdfReader=CustomPDFReader()
+    pdfReader = CustomPDFReader()
     docs=pdfReader.load_data("test_data/Attention.pdf")
     pprint.pprint(docs[0])
