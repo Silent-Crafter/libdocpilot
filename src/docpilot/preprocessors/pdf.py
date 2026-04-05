@@ -1,14 +1,17 @@
 import io
+import math
 import pprint
 import hashlib
 import os
 import fitz
 import logging
 
-from typing import List, Optional, Union, Dict, Tuple, Iterable
+from typing import List, Literal, Optional, Union, Dict, Tuple, Iterable
 from PIL import Image
+from sqlalchemy.engine.result import ResultInternal
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 class PDFPreprocessor:
     """A preprocessor for extracting elements from PDF documents.
@@ -226,17 +229,124 @@ class PDFPreprocessor:
 
         return all_elements
 
+    @staticmethod
+    def _bbox_gap(bbox_a: Tuple, bbox_b: Tuple) -> float:
+        """Euclidean edge-distance between two axis-aligned bounding boxes.
+        Returns 0 when they overlap or touch."""
+        ax0, ay0, ax1, ay1 = bbox_a
+        bx0, by0, bx1, by1 = bbox_b
+        hgap = max(0.0, max(bx0 - ax1, ax0 - bx1))
+        vgap = max(0.0, max(by0 - ay1, ay0 - by1))
+        return math.sqrt(hgap ** 2 + vgap ** 2)
+
+    def get_image_context_sequential(
+        self,
+        elements: Optional[List[Dict]] = None,
+        context_window: int = 2,
+    ) -> List[Dict]:
+        """For each image element, collect `context_window` non-image elements
+        immediately before and after it in document order.
+        Best for single-column PDFs."""
+        if elements is None:
+            elements = self.get_elements()
+
+        results = []
+        for idx, elem in enumerate(elements):
+            if elem.get("type") != "image":
+                continue
+
+            before, i = [], idx - 1
+            while i >= 0 and len(before) < context_window:
+                if elements[i]["type"] != "image":
+                    before.insert(0, elements[i])
+                i -= 1
+
+            after, i = [], idx + 1
+            while i < len(elements) and len(after) < context_window:
+                if elements[i]["type"] != "image":
+                    after.append(elements[i])
+                i += 1
+
+            results.append({
+                "mode": "sequential",
+                "index": idx,
+                "image": elem,
+                "before": before,
+                "after": after,
+            })
+        return results
+
+    def get_image_context_spatial(
+        self,
+        elements: Optional[List[Dict]] = None,
+        context_window: int = 2,
+        max_distance: float = 300.0,
+    ) -> List[Dict]:
+        """For each image, find the `context_window * 2` nearest same-page
+        text/table elements ranked by bounding-box distance.
+        Best for multi-column layouts and floating images."""
+        if elements is None:
+            elements = self.get_elements()
+
+        results = []
+        for elem in elements:
+            if elem.get("type") != "image":
+                continue
+
+            candidates = [
+                e for e in elements
+                if e["page"] == elem["page"] and e["type"] != "image"
+            ]
+            candidates.sort(key=lambda e: self._bbox_gap(elem["bbox"], e["bbox"]))
+
+            nearby = [
+                c for c in candidates
+                if self._bbox_gap(elem["bbox"], c["bbox"]) <= max_distance
+            ][:context_window * 2]
+
+            results.append({
+                "mode": "spatial",
+                "image": elem,
+                "nearby": nearby,
+            })
+        return results
+
+    def get_image_context(
+        self,
+        method: Literal['sequential', 'spatial'] = 'sequential',
+        context_window: int = 2,
+        max_distance: float = 300.0,
+        elements: Optional[List[Dict]] = None,
+    ) -> Dict[str, str]:
+        """High-level convenience: returns a flat {image_path: surrounding_text}
+        mapping using the chosen context extraction method."""
+        if elements is None:
+            elements = self.get_elements()
+
+        if method == 'sequential':
+            results = self.get_image_context_sequential(elements, context_window)
+            return {
+                r['image']['image_path']: "".join(
+                    e['content'] for e in r['before'] + r['after']
+                    if e['type'] == 'text'
+                )
+                for r in results
+            }
+        else:
+            results = self.get_image_context_spatial(elements, context_window, max_distance)
+            return {
+                r['image']['image_path']: "".join(
+                    e['content'] for e in r['nearby']
+                    if e['type'] == 'text'
+                )
+                for r in results
+            }
+
     def close(self):
         """Close the PDF document."""
         self.doc.close()
 
 if __name__=="__main__":
     pdfpre = PDFPreprocessor(r"data/Machine Learning.pdf")
-    returned_list = pdfpre.get_elements()
-    pprint.pprint([i for i in returned_list if i["page"] in [3]])
-
-    print("\n=== Extracted Images ===\n")
-    for elem in returned_list:
-        if elem.get("type") == "image":
-            print(f"Page {elem['page']:2d} : {os.path.basename(elem['image_path'])}")
-    pdfpre.close()
+    elems = pdfpre.get_image_context(method='spatial')
+    print(f"{elems=}")

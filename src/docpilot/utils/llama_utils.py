@@ -42,23 +42,25 @@ def load_docs(
         doc_dir: Union[Path, str],
         uri: str,
         embedding_table: str,
+        reindex: bool = False,
         **kwargs
-) -> List[Document]:
+) -> Tuple[List[Document], List[Document], dict]:
     """
-    Load documents from a directory using SimpleDirectoryReader of LlamaIndex
+    Load documents from a directory using SimpleDirectoryReader of LlamaIndex.
+
     :param doc_dir: the directory to load documents from
     :param kwargs: additional arguments to pass to SimpleDirectoryReader
     :param uri: the uri of pgvector database
-    :param db: the database name
     :param embedding_table: the table name of embeddings
-    :return: List of Document
+    :return: Tuple of (text_documents, image_label_documents)
     """
 
     input_files = kwargs.pop("input_files", [])
 
+    pdf_reader = CustomPDFReader()
     file_extractors = {
         ".xlsx": CustomXLSXReader(),
-        ".pdf": CustomPDFReader(),
+        ".pdf": pdf_reader,
     }
 
     if input_files:
@@ -71,9 +73,11 @@ def load_docs(
         ))
 
     # TODO: Add checks for when db doesn't contain the table
-    indexed_nodes = get_indexed_nodes(uri, embedding_table)
-    logger.debug("Already embedded files: %s", indexed_nodes)
-    logger.debug("Input files: %s", files)
+    indexed_nodes = []
+    if not reindex:
+        indexed_nodes = get_indexed_nodes(uri, embedding_table)
+        logger.debug("Already embedded files: %s", indexed_nodes)
+        logger.debug("Input files: %s", files)
 
     # Exclude files that are already indexed and return a path of the file
     input_files = list(map(
@@ -86,14 +90,20 @@ def load_docs(
     ))
 
     if not input_files:
-        return []
+        return [], [], {}
 
-    return SimpleDirectoryReader(
+    documents = SimpleDirectoryReader(
         input_dir=doc_dir,
         file_extractor=file_extractors,
         input_files=input_files,
         **kwargs
     ).load_data()
+
+    # Collect image label documents and raw mappings from the PDF reader's side-channel
+    image_documents = pdf_reader.image_documents
+    image_mappings = pdf_reader.image_mappings
+
+    return documents, image_documents, image_mappings
 
 
 def get_vector_store_index(

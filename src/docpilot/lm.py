@@ -39,7 +39,6 @@ class DspyLMWrapper(dspy.BaseLM):
         **kwargs
     ) -> str | None:
         """Implement the forward method for non-streaming calls."""
-        kwargs.pop('stream')
         final_prompt = self._render_template(prompt, template, variables)
         messages = messages or [{"role": "user", "content": final_prompt}]
 
@@ -59,7 +58,6 @@ class DspyLMWrapper(dspy.BaseLM):
         **kwargs
     ) -> str | None:
         """Async version of forward."""
-        kwargs.pop('stream')
         final_prompt = self._render_template(prompt, template, variables)
         messages = messages or [{"role": "user", "content": final_prompt}]
 
@@ -80,7 +78,6 @@ class DspyLMWrapper(dspy.BaseLM):
         **kwargs
     ) -> Generator[str, None, None]:
         """Stream responses without DSPy's streaming infrastructure."""
-        kwargs.pop('stream')
         final_prompt = self._render_template(prompt, template, variables)
         messages = messages or [{"role": "user", "content": final_prompt}]
 
@@ -104,7 +101,6 @@ class DspyLMWrapper(dspy.BaseLM):
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """Async version of stream."""
-        kwargs.pop('stream')
         final_prompt = self._render_template(prompt, template, variables)
         messages = messages or [{"role": "user", "content": final_prompt}]
 

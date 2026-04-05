@@ -136,6 +136,7 @@ class MultiHopRAG(dspy.Module):
         self.generate_answer = self.__resp_generator(AnswerPrompt)
 
         self.message_history: List[dict[str, str]] = []
+        self.message_history_with_images: List[dict[str, str]] = []
 
         self.context = []
         self.files = []
@@ -211,6 +212,10 @@ class MultiHopRAG(dspy.Module):
             {"role": "user", "content": question},
             {"role": "assistant", "content": resp},
         ])
+        self.update_message_history_with_images([
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": final_resp},
+        ])
         yield {"type": "finalization", "content": None, "status": "DONE"}
 
 
@@ -275,6 +280,12 @@ class MultiHopRAG(dspy.Module):
 
         self.message_history.extend(messages)
 
+    def update_message_history_with_images(self, messages: Union[List[dict[str, str]], str]):
+        if isinstance(messages, str):
+            raise NotImplementedError
+
+        self.message_history_with_images.extend(messages)
+
 
     def format_history(self) -> str:
         if not self.message_history:
@@ -299,17 +310,25 @@ class MultiHopRAG(dspy.Module):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         ext = file_path.suffix.lower()
+        image_docs: list[Document] = []
 
         if ext == '.pdf':
-            docs = CustomPDFReader().load_data(file_path)
-
+            reader = CustomPDFReader()
+            docs = reader.load_data(file_path)
+            image_docs = reader.image_documents
         else:
             docs = SimpleDirectoryReader(input_files=[file_path]).load_data(show_progress=True)
 
+        # Index text documents
         splitter = SemanticSplitterNodeParser(buffer_size=3, embed_model=self.__class__.embed_model_instance)
         nodes = splitter.get_nodes_from_documents(docs)
-
         self.__class__.retrieve.update_index(nodes)
+
+        # Index image label documents into the image index
+        if image_docs and self.__class__.image_retriever is not None:
+            image_nodes = SimpleNodeParser().get_nodes_from_documents(image_docs)
+            self.__class__.image_retriever.index.insert_nodes(image_nodes)
+            self.__class__.image_retriever.retriever = self.__class__.image_retriever.index.as_retriever()
 
 
 def configure_llm(model: str, base_url: str, cache: bool, **kwargs):

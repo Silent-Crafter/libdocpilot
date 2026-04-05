@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import openpyxl
 
@@ -82,6 +83,8 @@ class CustomPDFReader(BaseReader):
         """
         self.return_full_document = return_full_document
         self.preprocessor = None
+        self.image_documents: List[Document] = []
+        self.image_mappings: dict[str, str] = {}
 
     def load_data(
             self,
@@ -95,7 +98,28 @@ class CustomPDFReader(BaseReader):
 
         self.preprocessor = PDFPreprocessor(str(file))
         raw_elements = self.preprocessor.get_elements()
+
+        # Build image context mapping using already-extracted elements
+        image_mapping = self.preprocessor.get_image_context(
+            method='spatial', elements=raw_elements
+        )
         self.preprocessor.close()
+
+        # Stash raw mapping for debugging / serialization
+        self.image_mappings.update(image_mapping)
+
+        # Build image label documents (side-channel for separate image index)
+        for img_path, context_text in image_mapping.items():
+            if context_text.strip():
+                self.image_documents.append(Document(
+                    text=context_text,
+                    metadata={
+                        "file_name": os.path.abspath(img_path),
+                        "image_path": os.path.abspath(img_path),
+                        "source_file": file.name,
+                        "type": "image_label",
+                    }
+                ))
 
         documents=[]
 
@@ -162,5 +186,5 @@ class CustomPDFReader(BaseReader):
     
 if __name__=="__main__":
     pdfReader = CustomPDFReader()
-    docs=pdfReader.load_data("test_data/Attention.pdf")
-    pprint.pprint(docs[0])
+    docs = pdfReader.load_data(r"data/Machine Learning.pdf")
+    print(pdfReader.image_mappings)
