@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import openpyxl
 
@@ -8,12 +9,10 @@ from docpilot.preprocessors.pdf import PDFPreprocessor
 
 from typing import Any, Dict, List, Optional
 
-from docpilot.notlogging.notlogger import NotALogger
-
+import logging
 import pprint
 
-logger = NotALogger(__name__)
-logger.enabled = False
+logger = logging.getLogger(__name__)
 
 class CustomXLSXReader(BaseReader):
     def __init__(
@@ -78,16 +77,19 @@ class CustomXLSXReader(BaseReader):
 class CustomPDFReader(BaseReader):
     """PDF parser."""
 
-    def __init__(self, return_full_document: Optional[bool] = False) -> None:
+    def __init__(self, return_full_document: bool = False, use_vlm: bool = False) -> None:
         """
         Initialize PDFReader.
         """
         self.return_full_document = return_full_document
         self.preprocessor = None
+        self.image_documents: List[Document] = []
+        self.image_mappings: dict[str, str] = {}
+        self.use_vlm = use_vlm
 
     def load_data(
             self,
-            file: Path,
+            file: str | Path,
             extra_info: Optional[Dict] = None,
             use_artifact_pdf: bool = True,
     ) -> List[Document]:
@@ -95,9 +97,30 @@ class CustomPDFReader(BaseReader):
         if not isinstance(file, Path):
             file = Path(file)
 
-        self.preprocessor=PDFPreprocessor(str(file))
-        raw_elements=self.preprocessor.get_elements()
+        self.preprocessor = PDFPreprocessor(str(file))
+        raw_elements = self.preprocessor.get_elements()
+
+        # Build image context mapping using already-extracted elements
+        image_mapping = self.preprocessor.get_image_context(
+            method='spatial', elements=raw_elements, use_vlm=self.use_vlm
+        )
         self.preprocessor.close()
+
+        # Stash raw mapping for debugging / serialization
+        self.image_mappings.update(image_mapping)
+
+        # Build image label documents (side-channel for separate image index)
+        for img_path, context_text in image_mapping.items():
+            if context_text.strip():
+                self.image_documents.append(Document(
+                    text=context_text,
+                    metadata={
+                        "file_name": os.path.abspath(img_path),
+                        "image_path": os.path.abspath(img_path),
+                        "source_file": file.name,
+                        "type": "image_label",
+                    }
+                ))
 
         documents=[]
 
@@ -135,7 +158,6 @@ class CustomPDFReader(BaseReader):
                 text_buffer+=item["content"] +"\n\n"
             
             elif item["type"]=="image":
-                text_buffer+=f"\n[IMAGE REF: {item['content']}]\n"
                 documents.append(Document(
                     text=item['content'],
                     metadata={
@@ -148,7 +170,6 @@ class CustomPDFReader(BaseReader):
                 ))
             
             elif item["type"]=="table":
-                text_buffer+=f"\n[TABLE REF: {item['content']}]\n"
                 documents.append(Document(
                     text=item['content'],
                     metadata={
@@ -165,6 +186,6 @@ class CustomPDFReader(BaseReader):
         return documents
     
 if __name__=="__main__":
-    pdfReader=CustomPDFReader()
-    docs=pdfReader.load_data("test_data/Attention.pdf")
-    pprint.pprint(docs[0])
+    pdfReader = CustomPDFReader()
+    docs = pdfReader.load_data(r"data/Machine Learning.pdf")
+    print(pdfReader.image_mappings)
