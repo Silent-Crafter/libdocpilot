@@ -1,23 +1,25 @@
 import logging
-
 import dspy
-import dspy.streaming
 
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import NodeWithScore, TextNode
-from docpilot.signatures import GenerateSearchQuery, GenerateAnswer
+from docpilot.signatures import AnswerPrompt, QueryPrompt, build_prompt_from_signature
 from dspy.dsp.utils.utils import deduplicate
 from docpilot.utils.image_utils import image_to_b64
 from docpilot.utils.embed_utils import Embedder
+from docpilot.lm import DspyLMWrapper
 
-from typing import Generator, Union, Optional, List
+from typing import Union, Optional, List, Callable, Any
+from config import Config
 
 logger = logging.getLogger(__name__)
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):
         super().__init__(k=k)
+        self.index = index
         self.retriever = index.as_retriever(similarity_top_k = k)
 
     def forward(
@@ -72,6 +74,7 @@ class LlamaIndexRMClient(dspy.Retrieve):
 class ImageRetriever(dspy.Retrieve):
     def __init__(self, image_index: VectorStoreIndex):
         super().__init__()
+        self.index = image_index
         self.retriever = image_index.as_retriever()
 
     def forward(
@@ -102,23 +105,41 @@ class ImageRetriever(dspy.Retrieve):
 
 
 class MultiHopRAG(dspy.Module):
-    embed_model_instance = None
+    embed_model_instance: Optional[HuggingFaceEmbedding] = None
+    retrieve: Optional[LlamaIndexRMClient] = None
+    image_retriever: Optional[ImageRetriever] = None
 
     def __init__(self, index: VectorStoreIndex, image_index: VectorStoreIndex, num_passages=3):
         super().__init__()
 
-        self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
-        self.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
-        self.generate_answer = dspy.ChainOfThought(GenerateAnswer)
+        if self.__class__.retrieve is None:
+            self.__class__.retrieve = LlamaIndexRMClient(k=num_passages, index=index)
 
-        self.image_retriever = ImageRetriever(image_index)
+        if self.__class__.image_retriever is None:
+            self.__class__.image_retriever = ImageRetriever(image_index)
+
+        if self.__class__.embed_model_instance is None:
+            self.__class__.embed_model_instance = Embedder.get_embedder()
+
+        self.generate_query = self.__resp_generator(QueryPrompt)
+        self.generate_answer = self.__resp_generator(AnswerPrompt)
 
         self.message_history: List[dict[str, str]] = []
 
         self.context = []
         self.files = []
-        if not MultiHopRAG.embed_model_instance:
-            MultiHopRAG.embed_model_instance = Embedder.get_embedder()
+
+    def __resp_generator(self, signature) -> Callable[..., Any]:
+        def __generator(**kwargs):
+            stream = kwargs.pop('stream', False)
+            prompt = build_prompt_from_signature(signature, kwargs)
+            lm: DspyLMWrapper | None  = dspy.settings.get('lm')
+            if lm is None:
+                raise RuntimeError("Please configre an lm")
+
+            return lm(prompt=prompt, stream=stream, **kwargs)
+
+        return __generator
 
     def forward(self, question, stream: bool = False):
         context = []
@@ -131,12 +152,13 @@ class MultiHopRAG(dspy.Module):
             return '\n'.join(map(lambda d: f"{d['role']}: {d['content']}", history))
 
         query_resp = self.generate_query(past_context=serialize_message_history(self.message_history), question=question)
-        query = query_resp.keywords
+        # query = query_resp.keywords
+        query = query_resp
 
         yield {"type": "query", "content": query, "status": "Finding files"}
 
         logger.info("Query: %s", query)
-        nodes = self.retrieve(query)
+        nodes = self.__class__.retrieve(query)
         passages = list(reversed(nodes.passages))
 
         files = deduplicate(files + nodes.files)
@@ -148,29 +170,39 @@ class MultiHopRAG(dspy.Module):
         yield {"type": "files", "content": self.files, "status": "Generating answer"}
 
         if stream:
-            streamed_generate_answer = dspy.streamify(
-                self.generate_answer,
-                stream_listeners=[dspy.streaming.StreamListener(signature_field_name="answer")],
-                async_streaming=False
-            )
-
-            resp_generator: Generator = streamed_generate_answer(context=self.context, question=question, messages=self.format_history())
-
-            for chunk in resp_generator:
-                if isinstance(chunk, dspy.Prediction):
-                    resp = chunk.answer
-                    yield {
-                        "type": "answer",
-                        "content": chunk.answer,
-                        "status": "Inserting images"
-                    }
-                    break
-
+            # streamed_generate_answer = dspy.streamify(
+            #     self.generate_answer,
+            #     stream_listeners=[dspy.streaming.StreamListener(signature_field_name="answer")],
+            #     async_streaming=False
+            # )
+            #
+            # resp_generator: Generator = streamed_generate_answer(context=self.context, question=question, messages=self.format_history())
+            #
+            # for chunk in resp_generator:
+            #     if isinstance(chunk, dspy.Prediction):
+            #         resp = chunk.answer
+            #         yield {
+            #             "type": "answer",
+            #             "content": chunk.answer,
+            #             "status": "Inserting images"
+            #         }
+            #         break
+            #
+            #     yield {
+            #         "type": "streaming_answer",
+            #         "content": chunk.chunk,
+            #         "status": "Streaming"
+            #     }
+            accumulated = ""
+            for chunk in self.generate_answer(context=self.context, question=question, messages=self.format_history(), stream=True):
+                accumulated += chunk
                 yield {
                     "type": "streaming_answer",
-                    "content": chunk.chunk,
+                    "content": chunk,
                     "status": "Streaming"
                 }
+            resp = accumulated
+
 
         else:
             prediction = self.generate_answer(
@@ -178,7 +210,8 @@ class MultiHopRAG(dspy.Module):
                 question=question,
                 messages=self.format_history()
             )
-            resp = prediction.answer
+            # resp = prediction.answer
+            resp: str = prediction
 
             yield {"type": "answer", "content": resp, "status": "Inserting images"}
 
@@ -195,7 +228,7 @@ class MultiHopRAG(dspy.Module):
 
 
     def create_image_chunks(self, resp):
-        splitter = SemanticSplitterNodeParser(embed_model=self.embed_model_instance, buffer_size=1, breakpoint_percentile_threshold=85, include_metadata=False)
+        splitter = SemanticSplitterNodeParser(embed_model=self.__class__.embed_model_instance, buffer_size=1, breakpoint_percentile_threshold=85, include_metadata=False)
 
         img_nodes: list[TextNode] = splitter.get_nodes_from_documents([Document(text=resp)])
 
@@ -203,7 +236,7 @@ class MultiHopRAG(dspy.Module):
 
         retrieved_images_list = []
         image_scores_list = []
-        
+
         for node in img_nodes:
             text = node.text
             start_idx = node.start_char_idx
@@ -267,8 +300,9 @@ class MultiHopRAG(dspy.Module):
 
         return messages
 
+
 def configure_llm(model: str, base_url: str, cache: bool, **kwargs):
-    lm = dspy.LM(model="ollama/"+model, base_url=base_url, cache=cache, **kwargs)
+    lm = DspyLMWrapper(model=model, base_url=base_url, cache=cache, **kwargs)
     dspy.settings.configure(lm=lm)
     return lm
 
