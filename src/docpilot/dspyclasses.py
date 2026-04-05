@@ -12,10 +12,36 @@ from dspy.dsp.utils.utils import deduplicate
 from docpilot.utils.image_utils import image_to_b64, mappings_to_llamaindex_document
 from docpilot.utils.embed_utils import Embedder
 from docpilot.lm import DspyLMWrapper
+from collections import defaultdict
 
 from typing import Union, Optional, List, Callable, Any
 from config import Config
 logger = logging.getLogger(__name__)
+
+class ImageRanker:
+    def __init__(self):
+        self.inverted_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    def set(self, line: str, image: str, score: int, start_idx: int, end_idx: int):
+        self.inverted_map[image].append({"line": line, "score": score, "start_idx": start_idx, "end_idx": end_idx})
+
+    def rank(self, top_k: int = 1) -> dict[str, list[dict[str, Any]]]:
+        # First sort by score
+        for image in self.inverted_map.keys():
+            self.inverted_map[image] = sorted(self.inverted_map[image], key=lambda d: d['score'])
+
+        # Construct and return a normal line -> image map
+        image_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for image, data in self.inverted_map.items():
+            if len(image_map[data[0]['line']]) < top_k:
+                image_map[data[0]['line']].append({
+                    "image": image,
+                    "start_idx": data[0]["start_idx"],
+                    "end_idx": data[0]["end_idx"],
+                    "score": data[0]["score"],
+                })
+
+        return image_map
 
 class LlamaIndexRMClient(dspy.Retrieve):
     def __init__(self, index: VectorStoreIndex, k: int = 3):
@@ -137,6 +163,7 @@ class MultiHopRAG(dspy.Module):
 
         self.message_history: List[dict[str, str]] = []
         self.message_history_with_images: List[dict[str, str]] = []
+        self.ranker = ImageRanker()
 
         self.context = []
         self.files = []
@@ -203,8 +230,8 @@ class MultiHopRAG(dspy.Module):
 
         yield {"type": "answer", "content": resp, "status": "Inserting images"}
 
-        imaged_chunks, *_ = self.create_image_chunks(resp)
-
+        # imaged_chunks, *_ = self.create_image_chunks(resp)
+        imaged_chunks = self.__rank_images(resp)
         final_resp, *_  = self.place_images_from_chunks(resp, imaged_chunks)
         yield {"type": "answer_with_images", "content": final_resp, "status": "DONE"}
 
@@ -245,6 +272,35 @@ class MultiHopRAG(dspy.Module):
 
         return imaged_chunks, retrieved_images_list, image_scores_list
 
+    def __rank_images(self, actual_answer):
+        ranker = ImageRanker()
+        start_idx = 0
+        end_idx = -1
+        for line in actual_answer.splitlines():
+            if not line.strip():
+                start_idx += len(line) + 1
+                continue
+
+            end_idx = start_idx + len(line)
+            image_nodes = self.__class__.image_retriever(line)
+            
+            for image in image_nodes:
+                ranker.set(line, image.image, image.score, start_idx, end_idx)
+
+            start_idx = end_idx + 1
+
+        ranked = ranker.rank()
+
+        # Reshape from {line: [{image, start_idx, end_idx, score}, ...]}
+        # into {(start_idx, end_idx): [image_filename, ...]}
+        # which is what place_images_from_chunks expects
+        imaged_chunks: dict[tuple[int, int], list[str]] = {}
+        for line_text, entries in ranked.items():
+            for entry in entries:
+                key = (entry["start_idx"], entry["end_idx"])
+                imaged_chunks.setdefault(key, []).append(entry["image"])
+
+        return imaged_chunks
 
     def place_images_from_chunks(self, resp: str, imaged_chunks: dict):
         final_resp: str = ""
@@ -331,8 +387,11 @@ class MultiHopRAG(dspy.Module):
             self.__class__.image_retriever.retriever = self.__class__.image_retriever.index.as_retriever()
 
 
-def configure_llm(model: str, base_url: str, cache: bool, **kwargs):
-    lm = DspyLMWrapper(model=model, base_url=base_url, cache=cache, **kwargs)
+def configure_llm(model: str, cache: bool, base_url: Optional[str] = None, **kwargs):
+    if base_url:
+        lm = DspyLMWrapper(model=model, base_url=base_url, cache=cache, **kwargs)
+    else:
+        lm = DspyLMWrapper(model=model, cache=cache, **kwargs)
     dspy.settings.configure(lm=lm)
     return lm
 

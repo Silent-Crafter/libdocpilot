@@ -77,7 +77,7 @@ class CustomXLSXReader(BaseReader):
 class CustomPDFReader(BaseReader):
     """PDF parser."""
 
-    def __init__(self, return_full_document: Optional[bool] = False) -> None:
+    def __init__(self, return_full_document: bool = False, use_vlm: bool = False) -> None:
         """
         Initialize PDFReader.
         """
@@ -85,6 +85,7 @@ class CustomPDFReader(BaseReader):
         self.preprocessor = None
         self.image_documents: List[Document] = []
         self.image_mappings: dict[str, str] = {}
+        self.use_vlm = use_vlm
 
     def load_data(
             self,
@@ -101,7 +102,7 @@ class CustomPDFReader(BaseReader):
 
         # Build image context mapping using already-extracted elements
         image_mapping = self.preprocessor.get_image_context(
-            method='spatial', elements=raw_elements
+            method='spatial', elements=raw_elements, use_vlm=self.use_vlm
         )
         self.preprocessor.close()
 

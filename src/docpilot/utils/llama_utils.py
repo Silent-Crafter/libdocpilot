@@ -1,4 +1,5 @@
 import os
+import shutil
 import logging
 import psycopg2
 
@@ -39,11 +40,12 @@ def get_indexed_nodes(uri: str, embedding_table: str) -> List[str]:
 
 
 def load_docs(
-        doc_dir: Union[Path, str],
-        uri: str,
-        embedding_table: str,
-        reindex: bool = False,
-        **kwargs
+    doc_dir: Union[Path, str],
+    uri: str,
+    embedding_table: str,
+    reindex: bool = False,
+    use_vlm: bool = False,
+    **kwargs
 ) -> Tuple[List[Document], List[Document], dict]:
     """
     Load documents from a directory using SimpleDirectoryReader of LlamaIndex.
@@ -57,7 +59,7 @@ def load_docs(
 
     input_files = kwargs.pop("input_files", [])
 
-    pdf_reader = CustomPDFReader()
+    pdf_reader = CustomPDFReader(use_vlm=use_vlm)
     file_extractors = {
         ".xlsx": CustomXLSXReader(),
         ".pdf": pdf_reader,
@@ -78,6 +80,10 @@ def load_docs(
         indexed_nodes = get_indexed_nodes(uri, embedding_table)
         logger.debug("Already embedded files: %s", indexed_nodes)
         logger.debug("Input files: %s", files)
+
+    else:
+        shutil.rmtree('./out_images')
+        os.mkdir('./out_images')
 
     # Exclude files that are already indexed and return a path of the file
     input_files = list(map(

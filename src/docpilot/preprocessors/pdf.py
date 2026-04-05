@@ -1,12 +1,13 @@
 import io
 import math
-import pprint
 import hashlib
 import os
 import fitz
 import logging
+import ollama
 
-from typing import List, Literal, Optional, Union, Dict, Tuple, Iterable
+from collections import defaultdict
+from typing import List, Literal, Optional, Union, Dict, Tuple, Iterable, Any
 from PIL import Image
 from sqlalchemy.engine.result import ResultInternal
 
@@ -317,15 +318,17 @@ class PDFPreprocessor:
         context_window: int = 2,
         max_distance: float = 300.0,
         elements: Optional[List[Dict]] = None,
+        use_vlm: bool = False
     ) -> Dict[str, str]:
         """High-level convenience: returns a flat {image_path: surrounding_text}
         mapping using the chosen context extraction method."""
         if elements is None:
             elements = self.get_elements()
 
+        mappings = {}
         if method == 'sequential':
             results = self.get_image_context_sequential(elements, context_window)
-            return {
+            mappings = {
                 r['image']['image_path']: "".join(
                     e['content'] for e in r['before'] + r['after']
                     if e['type'] == 'text'
@@ -334,13 +337,48 @@ class PDFPreprocessor:
             }
         else:
             results = self.get_image_context_spatial(elements, context_window, max_distance)
-            return {
+            mappings =  {
                 r['image']['image_path']: "".join(
                     e['content'] for e in r['nearby']
                     if e['type'] == 'text'
                 )
                 for r in results
             }
+
+        if use_vlm:
+            self.mapping_to_vlm(mappings)
+
+        return mappings
+
+    def mapping_to_vlm(self, mapping):
+        keyword_mapping = {}
+
+        for img, desc in mapping.items():
+            # print(img)
+            try:
+                resp = ollama.generate(
+                        model='ministral-3:3b',
+                        prompt=f"""
+Context: 
+{desc}
+
+--------------------------------
+
+Extract keywords from the context that best match the image description as comma seperated values. if the image doesn\'t match the context, reply ONLY with 'None'""",
+                        images=[img]
+                ).response
+
+                if resp == None or resp.strip().lower() == "none":
+                    continue
+
+                keyword_mapping.update({img.split('/')[-1]: resp})
+            except KeyboardInterrupt:
+                break
+
+            except Exception:
+                continue
+
+        return keyword_mapping
 
     def close(self):
         """Close the PDF document."""
