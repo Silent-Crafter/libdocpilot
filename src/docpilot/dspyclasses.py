@@ -432,6 +432,9 @@ class MultiHopRAG(dspy.Module):
 
             conn.commit()
 
+            cursor.close()
+            conn.close()
+
             # 4. Delete image files from disk
             for img_path in image_paths:
                 try:
@@ -463,11 +466,10 @@ class MultiHopRAG(dspy.Module):
             vector_store=text_vs,
             embed_model=embed_model,
         )
-        if self.__class__.retrieve is not None:
-            self.__class__.retrieve.index = text_index
-            self.__class__.retrieve.retriever = text_index.as_retriever(
-                similarity_top_k=self.__class__.retrieve.k
-            )
+        self.__class__.retrieve.index = text_index
+        self.__class__.retrieve.retriever = text_index.as_retriever(
+            similarity_top_k=self.__class__.retrieve.k
+        )
 
         # Rebuild image index
         _, image_vs = get_vector_storage_context(uri, image_table, perform_setup=False)
@@ -475,9 +477,9 @@ class MultiHopRAG(dspy.Module):
             vector_store=image_vs,
             embed_model=embed_model,
         )
-        if self.__class__.image_retriever is not None:
-            self.__class__.image_retriever.index = image_index
-            self.__class__.image_retriever.retriever = image_index.as_retriever()
+
+        self.__class__.image_retriever.index = image_index
+        self.__class__.image_retriever.retriever = image_index.as_retriever()
 
 
 def configure_llm(model: str, cache: bool, base_url: Optional[str] = None, **kwargs):
